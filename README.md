@@ -14,7 +14,7 @@ marketplace catalog. Adding a skill later does not touch existing ones.
 claude-skills/
 ├── .claude-plugin/
 │   └── marketplace.json            # the marketplace catalog (lists every plugin)
-├── plugins/                        # metadata.pluginRoot → sources are relative to here
+├── plugins/                        # one directory per plugin
 │   └── code-review/                # one plugin == one skill
 │       ├── .claude-plugin/
 │       │   └── plugin.json         # plugin manifest
@@ -28,8 +28,8 @@ claude-skills/
 ```
 
 - `.claude-plugin/marketplace.json` — required at the repo root. Lists each
-  plugin with a `name` and a `source`. `metadata.pluginRoot: "./plugins"`
-  lets each `source` be written relative to `plugins/` (e.g. `"./code-review"`).
+  plugin with a `name` and a `source` relative to the repo root
+  (e.g. `"./plugins/code-review"`).
 - Each plugin has its own `.claude-plugin/plugin.json`.
 - Skills live at `skills/<name>/SKILL.md` inside a plugin and may bundle
   supporting files (scripts, references) alongside `SKILL.md`.
@@ -73,7 +73,7 @@ Update after you push changes here:
 2. Create `plugins/<new-skill>/skills/<new-skill>/SKILL.md`.
 3. Add an entry to the `plugins` array in
    `.claude-plugin/marketplace.json` with a `name` and
-   `source: "./<new-skill>"`.
+   `source: "./plugins/<new-skill>"`.
 
 Nothing about the existing plugins changes.
 
