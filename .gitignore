@@ -1,0 +1,13 @@
+# Per-repo code-review config (lives in the repos being reviewed, never here)
+.claude/code-review.json
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs / scratch
+*.log
