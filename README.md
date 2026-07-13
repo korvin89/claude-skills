@@ -65,6 +65,23 @@ After installing, invoke the skill (plugin skills are namespaced
 /korvin89:code-review --lang en       # pre-fill English as the comment-language default
 ```
 
+### Run arguments
+
+There are only four command-line arguments — everything else is chosen
+interactively (see [The flow](#the-flow-three-stops)):
+
+| Argument | What it does |
+|---|---|
+| `[pr-number \| pr-url]` | Review that PR (needs `gh`). Omit it → auto-detect: working tree if dirty, otherwise the current branch. |
+| `--post` (alias `--comment`) | Post the finalized batch to the PR. Only in PR mode, and only after you confirm the batch. Without it, nothing is ever posted. |
+| `--quick` | Skip the whole interactive flow: single pass, dump the findings, stop. Uses defaults (`сухо` style, no second pass). |
+| `--lang <code>` | Pre-fill the default for the comment-language question (e.g. `--lang en`). Still confirmed in the config prompt. |
+
+**Not flags — asked interactively** in the config prompt (Stop 1): the comment
+**style** (`сухо` / `вежливо`), whether to run a **second pass**, and the
+**comment language** (`--lang` only pre-fills its default). This is deliberate:
+the run is a conversation, not a long flag string.
+
 Claude can also trigger it automatically when you ask it to "review this PR" or
 "review my changes" — that is what the English `description` in the frontmatter
 is for.
