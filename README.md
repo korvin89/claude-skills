@@ -78,9 +78,9 @@ interactively (see [The flow](#the-flow-three-stops)):
 | `--lang <code>` | Pre-fill the default for the comment-language question (e.g. `--lang en`). Still confirmed in the config prompt. |
 
 **Not flags — asked interactively** in the config prompt (Stop 1): the comment
-**style** (`сухо` / `вежливо`), whether to run a **second pass**, and the
-**comment language** (`--lang` only pre-fills its default). This is deliberate:
-the run is a conversation, not a long flag string.
+**style** (`сухо` / `вежливо`), whether to run a **second pass**, the **comment
+language** (`--lang` only pre-fills its default), and the **focus areas** to watch
+for. This is deliberate: the run is a conversation, not a long flag string.
 
 Claude can also trigger it automatically when you ask it to "review this PR" or
 "review my changes" — that is what the English `description` in the frontmatter
@@ -135,15 +135,20 @@ of public APIs), accessibility, and bundle/perf.
 
 ### The flow (three stops)
 
-1. **Config (one prompt).** Before reviewing, it asks three things at once:
+1. **Config (one prompt).** Before reviewing, it asks four things at once:
    - **comment style** — `сухо` (dry, for agents) or `вежливо` (polite, for
      humans — changes are phrased as courteous suggestions);
    - **second pass** — run an independent review in a sub-agent? (see below);
-   - **comment language** — Russian / English / other.
+   - **comment language** — Russian / English / other;
+   - **focus areas** — a yes/no: `Нет`, or `Да` where you type exactly what to
+     watch for (a specific file, module, or risk). Whatever you type becomes an
+     elevated-priority target in the review.
 2. **Curation.** After the review, it dumps every finding in **Russian**,
    numbered, each with a severity and a confidence. You reply in free text with
-   the numbers to keep (and optional per-item additions). It also asks whether
-   you want a **summary comment** and can draft one for you.
+   the numbers to keep (and optional per-item additions). It also asks whether to
+   include the standard **top-level review comment** — a short AI disclaimer plus a
+   fixed **tag legend** (🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` / ❓ `question`),
+   marked `🤖 AI generated`, on by default.
 3. **Confirm or groom.** It renders the final batch the way it would be posted
    (in your chosen language and tone) and asks whether to post or keep grooming.
    Grooming loops back to curation.
@@ -154,8 +159,8 @@ of public APIs), accessibility, and bundle/perf.
 
 Every finding carries **both**:
 
-- **severity** — `blocker` / `should-fix` / `nit` / `question` (kept as these
-  exact English terms);
+- **severity** — 🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` / ❓ `question` (kept as
+  these exact English terms, each with its fixed emoji wherever the tag is shown);
 - **confidence** — `high` / `medium` / `low`. A low-confidence, high-severity
   finding is demoted to `question` rather than posted as a shaky blocker.
   Confidence is a working-layer triage signal and is **not** included in posted
@@ -190,7 +195,22 @@ Two distinct languages, on purpose:
 ```
 
 Fixed regardless of language: the frontmatter `description` (always English), the
-severity labels, and the `🤖 AI generated` marker.
+severity labels with their per-tag emoji (🔴 / 🟠 / 🔵 / ❓), and the
+`🤖 AI generated` marker on every posted comment (inline
+findings and the top-level legend comment).
+
+### Top-level review comment (disclaimer + legend)
+
+When at least one finding is posted, the batch is accompanied by one top-level PR
+comment: a short **AI disclaimer** (the review was AI-assisted, the reviewer
+validated every comment, and all wording — even the reviewer's own findings — was
+written by the AI) plus the **severity legend** describing all four tags, marked
+`🤖 AI generated` like every posted comment. The `should-fix` line also reminds the
+author to open an issue and link it if the fix is deferred. It is fixed
+boilerplate. Russian and English use strict verbatim templates; any other comment
+language is a faithful translation of the English one. It is not tone-adjusted and
+does not summarize the changes. It is included by default and can be declined
+during curation.
 
 ### Diff source (auto-detected)
 
@@ -220,9 +240,9 @@ do not require `gh`** and run without that check.
 
 - All findings are delivered in **one batch**, not incrementally.
 - The batch starts with the marker `🤖 **AI generated**`.
-- If findings are posted to a PR as separate comments (`--post`), **each
-  comment also starts with `🤖 AI generated`** so the marker is never lost when
-  the batch is split.
+- If findings are posted to a PR as separate comments (`--post`), **each posted
+  comment starts with `🤖 AI generated`** so the marker is never lost when the
+  batch is split — inline findings and the top-level legend comment alike.
 - Posting happens only with `--post`, only in PR mode, and only after you
   confirm the final batch. In working-tree or branch mode the batch is simply
   printed.

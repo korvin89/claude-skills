@@ -39,9 +39,12 @@ There are **two** languages in this workflow, and they are not the same:
 What stays fixed regardless of either language:
 
 - the frontmatter `description` (always English),
-- the severity labels `blocker` / `should-fix` / `nit` / `question` (kept as
-  these exact English terms, in the dump and in posted comments alike),
-- the `🤖 AI generated` marker.
+- the severity labels with their fixed emoji — 🔴 `blocker` / 🟠 `should-fix` /
+  🔵 `nit` / ❓ `question` — kept as these exact English terms, in the dump and in
+  posted comments alike,
+- the `🤖 AI generated` marker on **every** posted comment — each inline finding
+  and the single top-level legend comment (Step 8). The emoji and the English
+  marker text stay fixed in every comment language.
 
 Arguments you may receive in `$ARGUMENTS`:
 
@@ -55,10 +58,25 @@ Arguments you may receive in `$ARGUMENTS`:
 
 ---
 
+## Session title (PR mode) — do this first
+
+Claude Code has **no** programmatic session-rename API today (it is only a manual
+`/rename` command; tracked upstream), so you cannot set the title yourself. When
+you are reviewing a PR and know its number, emit exactly one Russian line inviting
+the reviewer to rename the session, then continue **without waiting** on it:
+
+> Для порядка переименуй сессию: `/rename Review #<pr-id>`
+
+Substitute the real PR id. Skip this entirely in working-tree and branch mode
+(there is no PR id) and never block the workflow on it.
+
+---
+
 ## Step 1 — Stop 1: resolve the run configuration (one prompt)
 
-Ask the reviewer **three things in a single `AskUserQuestion` call** (do not
-split them into separate stops). All three are pure configuration — batch them:
+Ask the reviewer **four things in a single `AskUserQuestion` call** (do not
+split them into separate stops) — three configuration questions plus a focus
+prompt. Batch them:
 
 1. **Comment style** — how the *posted* comments should read:
    - `сухо` (dry) — terse, imperative, for an agent/automation audience.
@@ -77,14 +95,26 @@ split them into separate stops). All three are pure configuration — batch them
       ```
    3. English.
    Present that resolved value as the pre-selected default.
+4. **Focus areas** — anything to pay special attention to in this review? A
+   single-select **yes/no**, where "yes" is a free-text input:
+   - `Нет` — nothing in particular; pre-select it as the default.
+   - `Да` — the reviewer types **into the free-text field** exactly what to watch
+     for (a file, a module, a risk — e.g. «таймзоны в billing», «не сломались ли
+     ретраи»).
+   The "yes" input is the built-in free-text / **Other** field: any text they
+   enter **is** the focus areas. `Нет` (or empty) means none. If they pick `Да`
+   but leave the field empty, ask once, in Russian, what exactly to watch. Carry
+   whatever they type into Step 5 as elevated-priority areas.
 
 **`--quick` bypass:** if `--quick` was passed, skip this prompt. Use style `сухо`,
-no second pass, and the comment language resolved by the default chain above.
+no second pass, no special focus areas, and the comment language resolved by the
+default chain above.
 
 **Non-interactive bypass:** if you genuinely cannot ask (headless run), fall back
 to the same defaults and say so in one Russian line.
 
-State the three resolved values back to yourself before continuing.
+State the resolved values (style, second pass, comment language, focus areas)
+back to yourself before continuing.
 
 ---
 
@@ -175,6 +205,11 @@ naming convention belongs in the readability pass).
 Work the passes **in this order**. Minor things come dead last so they never
 crowd out substance.
 
+If the reviewer named **focus areas** in Step 1, treat them as elevated priority:
+scrutinize them hard and explicitly report what you found there — including a
+plain "выглядит нормально" if it does. This raises attention; it does **not**
+license inventing findings or skipping the other passes.
+
 1. **Intent** — What is the change trying to do? Restate it from the PR
    description / linked issue / commits. Flag where the implementation does not
    match the stated intent, or where the intent itself is questionable.
@@ -216,12 +251,14 @@ crowd out substance.
 
 Every finding gets **both** a severity and a confidence.
 
-**Severity** — how much it blocks:
+**Severity** — how much it blocks. Each label has a **fixed emoji** that rides
+with it wherever the tag is shown (the Russian dump, the legend, and every posted
+finding comment) — always emoji **then** the English term:
 
-- `blocker` — must be fixed before merge (correctness/security/data loss).
-- `should-fix` — real problem, fix it before or right after merge.
-- `nit` — minor; author's discretion.
-- `question` — you need information to judge; not an assertion of a defect.
+- `🔴 blocker` — must be fixed before merge (correctness/security/data loss).
+- `🟠 should-fix` — real problem, fix it before or right after merge.
+- `🔵 nit` — minor; author's discretion.
+- `❓ question` — you need information to judge; not an assertion of a defect.
 
 **Confidence** — how sure you are: `high` / `medium` / `low`.
 
@@ -248,6 +285,8 @@ Spawn a sub-agent with the `Task` tool. Give it **exactly** these inputs:
 - the project conventions layer text from Step 4 (if present),
 - the ordered passes, the frontend layer, and the severity+confidence scheme
   from Step 5,
+- the reviewer's focus areas from Step 1 (if any) — framed as elevated
+  priorities to scrutinize, **not** as findings to confirm,
 - instruction to read the full surrounding context of each changed file itself.
 
 **Do NOT give it pass 1's findings.** The whole point is an uncontaminated look.
@@ -285,9 +324,13 @@ Begin the dump with:
 ### Per-finding format (in the Russian dump)
 
 ```
-N. **[<severity> · conf:<high|medium|low>]** `path/to/file.ext:LINE` — <проблема
-на русском>. <почему это важно>. <как чинить, если знаешь>. [✓✓ / только проход N]
+N. **[<emoji> <severity> · conf:<high|medium|low>]** `path/to/file.ext:LINE` —
+<проблема на русском>. <почему это важно>. <как чинить, если знаешь>. [✓✓ /
+только проход N]
 ```
+
+The `<emoji>` is the severity's fixed emoji: 🔴 `blocker` · 🟠 `should-fix` ·
+🔵 `nit` · ❓ `question`.
 
 Use a fenced code block for proposed code where it helps. Reference real
 `file:line` locations from the diff.
@@ -307,7 +350,7 @@ Russian line) under the marker. Do not invent findings to look thorough.
 
 ---
 
-## Step 8 — Stop 2: curation (numbered reply) + summary comment
+## Step 8 — Stop 2: curation (numbered reply) + review comment
 
 Ask the reviewer, in Russian, to curate the dump by replying in free text.
 Tell them the format explicitly, e.g.:
@@ -322,11 +365,69 @@ Interpret their reply:
 - apply any per-item additions/edits they gave,
 - if they omit a finding, drop it from the batch (it is not posted).
 
-Then ask about the **summary comment** in the same step (or right after their
-selection): нужен ли сводный комментарий, и если да — что в нём. Offer to draft
-one from the selected findings so they can edit rather than write from scratch.
+Then handle the **top-level review comment** — the fixed AI-disclaimer + tag-legend
+comment (see *The top-level review comment* section below). Ask, in Russian,
+whether to include it; **default `да`**. It is the same
+fixed template every run — the reviewer may decline it or tweak the wording, but
+by default it goes in. There is **no** free-form "summary of the changes" anymore;
+do not draft one.
 
 Do not proceed to the final batch until they have answered the curation.
+
+---
+
+## The top-level review comment (disclaimer + legend)
+
+When the final batch has **at least one** finding, it is accompanied by exactly
+**one** top-level PR comment: a short fixed AI disclaimer plus the severity
+legend, marked `🤖 AI generated` like every other posted comment. Rules:
+
+- It is **fixed boilerplate**: the `🤖 AI generated` marker, the disclaimer, and
+  the legend. It is **not** rephrased for the `сухо` / `вежливо` tone and does
+  **not** summarize the changes. The disclaimer says the review was AI-assisted,
+  that the reviewer validated every comment, and that all wording (even the
+  reviewer's own findings) was written by the AI.
+- It always lists **all four** severity terms, even if the batch used only some.
+- If the final batch ends up with **zero** findings, skip this comment entirely —
+  an empty legend helps no one.
+
+**Language = the comment language resolved in Step 1:**
+
+- **Русский** → post the RU template verbatim.
+- **English** → post the EN template verbatim.
+- **Anything else** → translate the **English** template faithfully into that
+  language. Keep the `🤖` marker and the per-tag emoji (🔴 / 🟠 / 🔵 / ❓), keep
+  the four severity terms (`blocker`, `should-fix`, `nit`, `question`) in English,
+  keep the structure. Do not paraphrase it into the chosen tone — it is
+  boilerplate, not a finding.
+
+### RU template (verbatim)
+
+```
+🤖 **AI generated**
+
+Это ревью сделано с использованием AI. Все замечания я провалидировал сам, но их формулировки составлены нейросетью — включая те, что я нашёл сам.
+
+**Легенда по тегам**
+- 🔴 **blocker** — нужно исправить до мержа.
+- 🟠 **should-fix** — реальная проблема; стоит исправить до мержа или сразу после. Если сейчас не выходит — заведите, пожалуйста, issue и оставьте ссылку на него в комментарии.
+- 🔵 **nit** — мелочь; на усмотрение автора.
+- ❓ **question** — нужно больше контекста; не обязательно дефект.
+```
+
+### EN template (verbatim)
+
+```
+🤖 **AI generated**
+
+This review was done with AI assistance. I validated every comment myself, but the wording — including the points I found myself — was written by the AI.
+
+**Severity legend**
+- 🔴 **blocker** — should be fixed before merge.
+- 🟠 **should-fix** — a real problem; worth fixing before or right after merge. If you can't get to it now, please open an issue and leave a comment linking it.
+- 🔵 **nit** — minor; author's discretion.
+- ❓ **question** — I need more context; not necessarily a defect.
+```
 
 ---
 
@@ -336,10 +437,13 @@ Render the **final batch** the way it would actually be posted:
 
 - prose in the **comment language** from Step 1,
 - in the chosen **tone** (`сухо` / `вежливо`),
-- severity labels kept as the fixed English terms,
+- severity labels kept as the fixed English terms, each with its emoji
+  (🔴 / 🟠 / 🔵 / ❓),
 - confidence and the `✓✓` corroboration marker **removed** (working-layer only),
-- the `🤖 **AI generated**` marker at the top,
-- the summary comment (if requested) included.
+- the `🤖 AI generated` marker on each posted comment — inline findings and the
+  top-level legend comment alike,
+- the top-level review comment (disclaimer + legend) included by default, unless
+  the reviewer declined it in Step 8.
 
 Then ask, in Russian: всё ок и постим — или ещё почитать и погрумить? If they
 want to groom, loop back to Step 8 (re-curate) with their new input. Only move on
@@ -352,13 +456,19 @@ when they confirm.
 Only when `--post`/`--comment` was passed **and** you are in PR mode (so `gh`
 is present) **and** the reviewer confirmed in Step 9: post the curated findings.
 Because a batch may be split into separate comments, **every individual comment
-must also start with the `🤖 AI generated` marker** so it is never lost when
-detached from the batch.
+must start with the `🤖 AI generated` marker** so it is never lost when detached
+from the batch.
 
 - Inline comments on specific lines are preferred where the finding maps to a
-  line; the summary comment (if any) is a single top-level PR comment.
-- Prefix each posted comment body with `🤖 **AI generated**`.
-- Post in the resolved comment language and tone; keep severity labels in English.
+  line; prefix each one's body with `🤖 **AI generated**`.
+- The top-level review comment (disclaimer + legend, Step 8) is a single top-level
+  PR comment, prefixed with `🤖 **AI generated**` like the others. Post it by
+  default — unless the reviewer declined it — and only when at least one finding
+  is posted.
+- Post in the resolved comment language and tone; keep severity labels in English,
+  each prefixed with its emoji (🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` /
+  ❓ `question`). The legend comment is the verbatim RU/EN template (or a faithful
+  translation of the EN one) and is **not** tone-adjusted.
 - After posting, confirm to the reviewer (in Russian) what was posted and where.
 
 Never post when `--post` was not given, and never post in working-tree or
