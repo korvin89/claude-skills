@@ -7,10 +7,10 @@
   "description": "Personal library of reusable Claude Code skills, distributed as plugins so they can be installed into any project without committing them.",
   "plugins": [
     {
-      "name": "code-review",
-      "source": "./plugins/code-review",
-      "description": "Workflow-driven code review: auto-detects the diff source (PR / local branch / working tree), reads the full surrounding context of each changed file, and reviews in ordered passes — intent, correctness, architecture, tests, readability, then minor nits last. Includes React / TypeScript / a11y / perf checks.",
-      "keywords": ["code-review", "review", "git", "github", "pr", "frontend", "react", "typescript"]
+      "name": "korvin89",
+      "source": "./plugins/korvin89",
+      "description": "korvin89's personal skill namespace. Ships an interactive, curation-first code-review workflow (invoked as korvin89:code-review): auto-detects the diff source (PR / local branch / working tree), reads the full surrounding context, reviews in ordered passes with severity + confidence, optionally runs an independent second pass, and lets you curate which findings get posted. More skills will be added here over time.",
+      "keywords": ["korvin89", "code-review", "review", "git", "github", "pr", "frontend", "react", "typescript"]
     }
   ]
 }
