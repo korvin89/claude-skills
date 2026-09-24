@@ -6,7 +6,7 @@ description: >-
   passes with severity and confidence, optionally adds an independent second
   pass, then lets the reviewer pick which findings get posted. Use when asked
   to review a PR, review changes or a diff, or check code before merge.
-argument-hint: "[pr-number | pr-url] [--post] [--quick] [--branch] [--lang <code>]"
+argument-hint: "[pr-number | pr-url] [--post] [--quick] [--branch]"
 allowed-tools: Read, Grep, Glob, Bash, Agent, AskUserQuestion
 ---
 
@@ -49,10 +49,9 @@ Files bundled with this plugin:
 | Argument | Effect |
 |---|---|
 | `<number>` / `#<number>` / `<pr-url>` | PR mode (needs `gh`). Omitted → working tree if dirty, else current branch. |
-| `--post` (alias `--comment`) | Post the confirmed batch to the PR (Step 9). Ignored under `--quick`. |
+| `--post` | Post the confirmed batch to the PR (Step 9). Ignored under `--quick`. |
 | `--quick` | Single pass, dump the findings, stop: no prompts, no second pass, no posting. |
-| `--branch` / `--working` | Force branch or working-tree mode instead of auto-detect. |
-| `--lang <code>` | Pre-fill the comment-language default at Stop 1. |
+| `--branch` | Force branch mode even when the working tree is dirty. |
 
 When you cannot ask the reviewer (headless run), say so in one Russian line and
 behave as `--quick`.
@@ -91,8 +90,8 @@ in a single `AskUserQuestion` call**:
 
 1. **Второй проход** — `да` / `нет`, default `нет` (Step 5).
 2. **Язык комментариев** — `Русский` / `English` / other via the free-text
-   field. Default, first match wins: `--lang` → the `comment-language:` line of
-   the conventions layer (Step 3) → English. Pre-select it.
+   field. Default: the `comment-language:` line of the conventions layer
+   (Step 3), else English. Pre-select it.
 3. **На что смотреть особенно** — `Нет` (default), `Корректность`, `Тесты`, or
    the reviewer types their own focus in the free-text field (a file, a module,
    a risk: «таймзоны в billing»). Whatever they type is the focus areas.

@@ -3,16 +3,16 @@
 # collect-diff.sh — auto-detect what to review and print it.
 #
 # Usage:
-#   collect-diff.sh [PR_NUMBER | #PR_NUMBER | PR_URL] [--branch | --working] [other flags…]
+#   collect-diff.sh [PR_NUMBER | #PR_NUMBER | PR_URL] [--branch] [--post] [--quick]
 #
-# The whole skill argument string can be passed through verbatim: every other
-# `--flag` (and the value after `--lang`) is ignored here. Any remaining
-# argument that is not a PR reference is an error (exit 4) — the script never
-# guesses a mode from a malformed argument.
+# The whole skill argument string can be passed through verbatim: --post and
+# --quick are accepted and ignored here. Anything else that is not a PR
+# reference or --branch is an error (exit 4) — the script never guesses a mode
+# from a malformed argument.
 #
 # Detection order (first match wins):
 #   1. PR mode      — a PR reference was given. Requires `gh`.
-#   2. Working-tree — uncommitted changes exist (or --working).
+#   2. Working-tree — uncommitted changes exist.
 #   3. Branch mode  — current branch vs its merge-base with the default branch
 #                     (origin/<default> preferred over the local branch), or --branch.
 #
@@ -38,12 +38,12 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
 
 # ------------------------------------------------------------- arguments ----
 pr=""
-force=""
+force_branch=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --branch|--working) force="${1#--}" ;;
-    --lang)             if [ $# -gt 1 ]; then shift; fi ;;   # skip its value too
-    --*)                ;;                                   # other skill flags
+    --branch)       force_branch=1 ;;
+    --post|--quick) ;;                                   # skill flags, not ours
+    --*)            die 4 "Unknown flag: '$1'." ;;
     *)
       a="${1#\#}"                                            # allow "#123"
       case "$a" in
@@ -54,8 +54,8 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-if [ -n "$pr" ] && [ -n "$force" ]; then
-  die 4 "--$force cannot be combined with a PR reference."
+if [ -n "$pr" ] && [ "$force_branch" = 1 ]; then
+  die 4 "--branch cannot be combined with a PR reference."
 fi
 
 # Base ref for branch comparisons. Prefer origin/<default>: a stale local
@@ -112,7 +112,7 @@ if [ -n "$pr" ]; then
 fi
 
 # ------------------------------------------------------ Working-tree mode ----
-if { [ -z "$force" ] && [ -n "$(git status --porcelain)" ]; } || [ "$force" = working ]; then
+if [ "$force_branch" = 0 ] && [ -n "$(git status --porcelain)" ]; then
   # Diff against HEAD, or the empty tree when the repo has no commits yet.
   if git rev-parse --verify -q HEAD >/dev/null 2>&1; then
     work_base="HEAD"

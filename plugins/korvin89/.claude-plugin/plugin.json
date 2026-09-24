@@ -1,6 +1,6 @@
 {
   "name": "korvin89",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "korvin89's personal skill namespace for Claude Code. Ships an interactive, curation-first code-review workflow and a Herdr tab helper; more skills will live here over time.",
   "author": {
     "name": "Evgenii Alaev",

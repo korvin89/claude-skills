@@ -138,16 +138,14 @@ in [references/rubric.md](plugins/korvin89/skills/code-review/references/rubric.
 /korvin89:code-review 1234 --post     # …and post the curated batch as one PR review
 /korvin89:code-review --quick         # single pass, dump findings, no questions
 /korvin89:code-review --branch        # force branch mode even with a dirty tree
-/korvin89:code-review --lang en       # pre-fill English as the comment-language default
 ```
 
 | Argument | What it does |
 |---|---|
 | `[pr-number \| #number \| pr-url]` | Review that PR (needs `gh`). Omit it → auto-detect: working tree if dirty, otherwise the current branch against `origin/<default>`. |
-| `--post` (alias `--comment`) | Post the finalized batch to the PR as a single review. Only in PR mode, only after you confirm. Ignored under `--quick`. |
+| `--post` | Post the finalized batch to the PR as a single review. Only in PR mode, only after you confirm. Ignored under `--quick`. |
 | `--quick` | Skip the interactive flow: single pass, dump the findings, stop. |
-| `--branch` / `--working` | Force the mode instead of auto-detecting it. |
-| `--lang <code>` | Pre-fill the default for the comment-language question. |
+| `--branch` | Force branch mode even when the working tree is dirty. |
 
 Everything else is asked in one prompt before the review: whether to run the
 second pass, the comment language, and any focus areas to scrutinize.
