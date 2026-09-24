@@ -9,7 +9,7 @@
     {
       "name": "korvin89",
       "source": "./plugins/korvin89",
-      "description": "korvin89's personal skill namespace. Ships an interactive, curation-first code-review workflow (invoked as korvin89:code-review): auto-detects the diff source (PR / local branch / working tree), reads the full surrounding context, reviews in ordered passes with severity + confidence, optionally runs an independent second pass, and lets you curate which findings get posted. More skills will be added here over time.",
+      "description": "korvin89's personal skill namespace. Ships an interactive, curation-first code-review workflow (invoked as korvin89:code-review): auto-detects the diff source (PR / local branch / working tree), reads the full surrounding context, reviews in ordered passes with severity + confidence, optionally runs an independent second pass, and lets you curate which findings get posted. Also ships herdr-tab, a user-invoked helper that renames the current Herdr tab. More skills will be added here over time.",
       "keywords": ["korvin89", "code-review", "review", "git", "github", "pr", "frontend", "react", "typescript"]
     }
   ]
