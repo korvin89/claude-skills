@@ -1,84 +1,30 @@
 # claude-skills
 
 A personal library of reusable [Claude Code](https://code.claude.com/docs)
-skills, packaged as a **plugin marketplace**. Skills are installed into any
-project with `/plugin install` — they live here, not in the repos that use
-them, so nothing has to be committed into those projects.
+skills, packaged as a plugin marketplace. Skills are installed into any project
+with `/plugin install` — they live here, not in the repos that use them.
 
-Skills are grouped under **`korvin89`**, a personal namespace plugin that can
-hold many skills. Adding a skill later does not touch existing ones.
+Skills are grouped under `korvin89`, a personal namespace plugin, and invoked
+as `korvin89:<skill>`.
 
 ## Install
-
-The marketplace is this repo on GitHub. Add it once, then install the plugin:
 
 ```text
 /plugin marketplace add korvin89/claude-skills
 /plugin install korvin89@claude-skills
 ```
 
-`claude plugin list` shows the installed version.
-
 ## Update
 
-Two copies are involved. The **catalog** is a clone of this repo's `main` at
-`~/.claude/plugins/marketplaces/claude-skills`. The **installed plugin** is a
-copy at `~/.claude/plugins/cache/claude-skills/korvin89/<version>`, pinned by
-the `version` field of `plugin.json`. A new version reaches a session only
-after both are refreshed, in that order.
-
-### Publish a version
-
-1. Bump `version` in `plugins/korvin89/.claude-plugin/plugin.json`. Without
-   the bump the installed copy never changes, whatever else was merged.
-2. Validate the manifests:
-
-   ```text
-   claude plugin validate .
-   claude plugin validate ./plugins/korvin89
-   ```
-
-3. Merge to `main`. The catalog follows `main` only; a release branch is
-   invisible to it.
-4. Optional: `claude plugin tag --push` creates and pushes a
-   `korvin89--v<version>` tag after checking that `plugin.json` and the
-   marketplace entry agree.
-
-### Install the new version
-
-In Claude Code:
-
 ```text
-/plugin marketplace update claude-skills    # refresh the catalog
-/plugin update korvin89@claude-skills       # install the new version
-/reload-plugins                             # apply without a restart
+/plugin marketplace update claude-skills
+/plugin update korvin89@claude-skills
+/reload-plugins
 ```
 
 From a shell: `claude plugin marketplace update claude-skills`, then
 `claude plugin update korvin89@claude-skills`, then restart Claude Code.
-
-## Developing locally
-
-Load the plugin straight from the working tree for one session; it overrides
-the installed copy of the same name, so a release branch can be tried before it
-is merged:
-
-```text
-claude --plugin-dir ./plugins/korvin89
-```
-
-After editing files, `/reload-plugins` picks up the changes without a restart.
-
-## Adding more skills later
-
-**Under the `korvin89` namespace** (most skills): create
-`plugins/korvin89/skills/<new-skill>/SKILL.md`. It is invoked as
-`korvin89:<new-skill>`; no marketplace change is needed.
-
-**As a separate plugin** (only for a distinct install/namespace): create
-`plugins/<new-plugin>/.claude-plugin/plugin.json` and
-`plugins/<new-plugin>/skills/<new-skill>/SKILL.md`, then add an entry to the
-`plugins` array in `.claude-plugin/marketplace.json`.
+`claude plugin list` shows the installed version.
 
 ---
 
