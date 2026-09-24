@@ -4,7 +4,7 @@ A Claude Code plugin marketplace. `.claude-plugin/marketplace.json` lists the
 plugins; each plugin is `plugins/<name>/` with `.claude-plugin/plugin.json` and
 `skills/<skill>/SKILL.md`, invoked as `<plugin>:<skill>`. `README.md` is for
 consumers only: install, update, what each skill does. Publishing and
-development notes live here.
+development notes live here; `CLAUDE.md` is a symlink to this file.
 
 ## Release
 
