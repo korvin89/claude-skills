@@ -8,39 +8,6 @@ them, so nothing has to be committed into those projects.
 Skills are grouped under **`korvin89`**, a personal namespace plugin that can
 hold many skills. Adding a skill later does not touch existing ones.
 
-## Layout
-
-```
-claude-skills/
-├── .claude-plugin/
-│   └── marketplace.json            # the marketplace catalog (lists every plugin)
-├── plugins/                        # one directory per plugin
-│   └── korvin89/                   # personal namespace plugin (holds many skills)
-│       ├── .claude-plugin/
-│       │   └── plugin.json         # plugin manifest
-│       └── skills/
-│           ├── code-review/        # invoked as korvin89:code-review
-│           │   ├── SKILL.md        # the workflow
-│           │   ├── references/
-│           │   │   ├── rubric.md   # passes, severity/confidence, finding format
-│           │   │   └── legend.md   # the top-level review comment (RU/EN)
-│           │   └── scripts/
-│           │       ├── collect-diff.sh   # detects and prints what to review
-│           │       └── post-review.sh    # posts the batch as one PR review
-│           └── herdr-tab-rename/   # invoked as korvin89:herdr-tab-rename (by hand only)
-│               ├── SKILL.md
-│               └── scripts/
-│                   └── rename.sh   # renames the current Herdr tab; no-op outside Herdr
-├── README.md
-└── .gitignore
-```
-
-- `.claude-plugin/marketplace.json` — required at the repo root. Lists each
-  plugin with a `name` and a `source` relative to the repo root.
-- Each plugin has its own `.claude-plugin/plugin.json`.
-- Skills live at `skills/<name>/SKILL.md` inside a plugin and may bundle
-  supporting files alongside. Each is invoked as `<plugin>:<skill>`.
-
 ## Install
 
 The marketplace is this repo on GitHub. Add it once, then install the plugin:
@@ -52,42 +19,43 @@ The marketplace is this repo on GitHub. Add it once, then install the plugin:
 
 `claude plugin list` shows the installed version.
 
-## Updating an installed plugin
+## Update
 
-Claude Code keeps two copies of a GitHub marketplace:
+Two copies are involved. The **catalog** is a clone of this repo's `main` at
+`~/.claude/plugins/marketplaces/claude-skills`. The **installed plugin** is a
+copy at `~/.claude/plugins/cache/claude-skills/korvin89/<version>`, pinned by
+the `version` field of `plugin.json`. A new version reaches a session only
+after both are refreshed, in that order.
 
-- the **catalog**, a clone of this repo's `main` at
-  `~/.claude/plugins/marketplaces/claude-skills`;
-- the **installed plugin**, a copy at
-  `~/.claude/plugins/cache/claude-skills/korvin89/<version>`, pinned by the
-  `version` field of `plugin.json`.
-
-A change is only picked up when the version changes, so a release is:
+### Publish a version
 
 1. Bump `version` in `plugins/korvin89/.claude-plugin/plugin.json`. Without
-   the bump `/plugin update` finds nothing new, even after the catalog refresh.
-2. Merge to `main` and push. The catalog follows `main`; a release branch is
-   invisible to it.
-3. In Claude Code:
+   the bump the installed copy never changes, whatever else was merged.
+2. Validate the manifests:
 
    ```text
-   /plugin marketplace update claude-skills    # refresh the catalog clone
-   /plugin update korvin89@claude-skills       # install the new version into the cache
-   /reload-plugins                             # apply in the current session (or restart)
+   claude plugin validate .
+   claude plugin validate ./plugins/korvin89
    ```
 
-   The same works from a shell: `claude plugin marketplace update claude-skills`
-   and `claude plugin update korvin89@claude-skills`.
+3. Merge to `main`. The catalog follows `main` only; a release branch is
+   invisible to it.
+4. Optional: `claude plugin tag --push` creates and pushes a
+   `korvin89--v<version>` tag after checking that `plugin.json` and the
+   marketplace entry agree.
 
-Optional: `claude plugin tag --push` creates and pushes a `korvin89--v<version>`
-tag after checking that `plugin.json` and the marketplace entry agree.
+### Install the new version
 
-Validate the manifests before publishing:
+In Claude Code:
 
 ```text
-claude plugin validate .
-claude plugin validate ./plugins/korvin89
+/plugin marketplace update claude-skills    # refresh the catalog
+/plugin update korvin89@claude-skills       # install the new version
+/reload-plugins                             # apply without a restart
 ```
+
+From a shell: `claude plugin marketplace update claude-skills`, then
+`claude plugin update korvin89@claude-skills`, then restart Claude Code.
 
 ## Developing locally
 
