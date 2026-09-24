@@ -1,116 +1,30 @@
 # claude-skills
 
 A personal library of reusable [Claude Code](https://code.claude.com/docs)
-skills, packaged as a **plugin marketplace**. Skills are installed into any
-project with `/plugin install` — they live here, not in the repos that use
-them, so nothing has to be committed into those projects.
+skills, packaged as a plugin marketplace. Skills are installed into any project
+with `/plugin install` — they live here, not in the repos that use them.
 
-Skills are grouped under **`korvin89`**, a personal namespace plugin that can
-hold many skills. Adding a skill later does not touch existing ones.
-
-## Layout
-
-```
-claude-skills/
-├── .claude-plugin/
-│   └── marketplace.json            # the marketplace catalog (lists every plugin)
-├── plugins/                        # one directory per plugin
-│   └── korvin89/                   # personal namespace plugin (holds many skills)
-│       ├── .claude-plugin/
-│       │   └── plugin.json         # plugin manifest
-│       └── skills/
-│           ├── code-review/        # invoked as korvin89:code-review
-│           │   ├── SKILL.md        # the workflow
-│           │   ├── references/
-│           │   │   ├── rubric.md   # passes, severity/confidence, finding format
-│           │   │   └── legend.md   # the top-level review comment (RU/EN)
-│           │   └── scripts/
-│           │       ├── collect-diff.sh   # detects and prints what to review
-│           │       └── post-review.sh    # posts the batch as one PR review
-│           └── herdr-tab/          # invoked as korvin89:herdr-tab (by hand only)
-│               ├── SKILL.md
-│               └── scripts/
-│                   └── rename.sh   # renames the current Herdr tab; no-op outside Herdr
-├── README.md
-└── .gitignore
-```
-
-- `.claude-plugin/marketplace.json` — required at the repo root. Lists each
-  plugin with a `name` and a `source` relative to the repo root.
-- Each plugin has its own `.claude-plugin/plugin.json`.
-- Skills live at `skills/<name>/SKILL.md` inside a plugin and may bundle
-  supporting files alongside. Each is invoked as `<plugin>:<skill>`.
+Skills are grouped under `korvin89`, a personal namespace plugin, and invoked
+as `korvin89:<skill>`.
 
 ## Install
-
-The marketplace is this repo on GitHub. Add it once, then install the plugin:
 
 ```text
 /plugin marketplace add korvin89/claude-skills
 /plugin install korvin89@claude-skills
 ```
 
+## Update
+
+```text
+/plugin marketplace update claude-skills
+/plugin update korvin89@claude-skills
+/reload-plugins
+```
+
+From a shell: `claude plugin marketplace update claude-skills`, then
+`claude plugin update korvin89@claude-skills`, then restart Claude Code.
 `claude plugin list` shows the installed version.
-
-## Updating an installed plugin
-
-Claude Code keeps two copies of a GitHub marketplace:
-
-- the **catalog**, a clone of this repo's `main` at
-  `~/.claude/plugins/marketplaces/claude-skills`;
-- the **installed plugin**, a copy at
-  `~/.claude/plugins/cache/claude-skills/korvin89/<version>`, pinned by the
-  `version` field of `plugin.json`.
-
-A change is only picked up when the version changes, so a release is:
-
-1. Bump `version` in `plugins/korvin89/.claude-plugin/plugin.json`. Without
-   the bump `/plugin update` finds nothing new, even after the catalog refresh.
-2. Merge to `main` and push. The catalog follows `main`; a release branch is
-   invisible to it.
-3. In Claude Code:
-
-   ```text
-   /plugin marketplace update claude-skills    # refresh the catalog clone
-   /plugin update korvin89@claude-skills       # install the new version into the cache
-   /reload-plugins                             # apply in the current session (or restart)
-   ```
-
-   The same works from a shell: `claude plugin marketplace update claude-skills`
-   and `claude plugin update korvin89@claude-skills`.
-
-Optional: `claude plugin tag --push` creates and pushes a `korvin89--v<version>`
-tag after checking that `plugin.json` and the marketplace entry agree.
-
-Validate the manifests before publishing:
-
-```text
-claude plugin validate .
-claude plugin validate ./plugins/korvin89
-```
-
-## Developing locally
-
-Load the plugin straight from the working tree for one session; it overrides
-the installed copy of the same name, so a release branch can be tried before it
-is merged:
-
-```text
-claude --plugin-dir ./plugins/korvin89
-```
-
-After editing files, `/reload-plugins` picks up the changes without a restart.
-
-## Adding more skills later
-
-**Under the `korvin89` namespace** (most skills): create
-`plugins/korvin89/skills/<new-skill>/SKILL.md`. It is invoked as
-`korvin89:<new-skill>`; no marketplace change is needed.
-
-**As a separate plugin** (only for a distinct install/namespace): create
-`plugins/<new-plugin>/.claude-plugin/plugin.json` and
-`plugins/<new-plugin>/skills/<new-skill>/SKILL.md`, then add an entry to the
-`plugins` array in `.claude-plugin/marketplace.json`.
 
 ---
 
@@ -138,16 +52,14 @@ in [references/rubric.md](plugins/korvin89/skills/code-review/references/rubric.
 /korvin89:code-review 1234 --post     # …and post the curated batch as one PR review
 /korvin89:code-review --quick         # single pass, dump findings, no questions
 /korvin89:code-review --branch        # force branch mode even with a dirty tree
-/korvin89:code-review --lang en       # pre-fill English as the comment-language default
 ```
 
 | Argument | What it does |
 |---|---|
 | `[pr-number \| #number \| pr-url]` | Review that PR (needs `gh`). Omit it → auto-detect: working tree if dirty, otherwise the current branch against `origin/<default>`. |
-| `--post` (alias `--comment`) | Post the finalized batch to the PR as a single review. Only in PR mode, only after you confirm. Ignored under `--quick`. |
+| `--post` | Post the finalized batch to the PR as a single review. Only in PR mode, only after you confirm. Ignored under `--quick`. |
 | `--quick` | Skip the interactive flow: single pass, dump the findings, stop. |
-| `--branch` / `--working` | Force the mode instead of auto-detecting it. |
-| `--lang <code>` | Pre-fill the default for the comment-language question. |
+| `--branch` | Force branch mode even when the working tree is dirty. |
 
 Everything else is asked in one prompt before the review: whether to run the
 second pass, the comment language, and any focus areas to scrutinize.
@@ -184,13 +96,13 @@ rubric is the base, project conventions add to and override it, and on a direct
 conflict the project layer wins. A line `comment-language: en` (or `ru`, or any
 language name) in that file sets the repo's default comment language.
 
-## `korvin89:herdr-tab`
+## `korvin89:herdr-tab-rename`
 
 Renames the current [Herdr](https://herdr.dev) tab. User-invoked only (no
 description is loaded into context), so it costs nothing until typed:
 
 ```text
-/korvin89:herdr-tab pr-1234
+/korvin89:herdr-tab-rename pr-1234
 ```
 
 Its script, `scripts/rename.sh <name>`, is what other skills call directly:

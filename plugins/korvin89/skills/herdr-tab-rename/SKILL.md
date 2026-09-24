@@ -1,5 +1,5 @@
 ---
-name: herdr-tab
+name: herdr-tab-rename
 description: Rename the current Herdr tab.
 disable-model-invocation: true
 argument-hint: "<name>"
@@ -19,5 +19,5 @@ it prints one line on stderr; relay that line. Otherwise confirm the new name
 in one line.
 
 Other skills call the script directly by path,
-`${CLAUDE_PLUGIN_ROOT}/skills/herdr-tab/scripts/rename.sh <name>`, and never
+`${CLAUDE_PLUGIN_ROOT}/skills/herdr-tab-rename/scripts/rename.sh <name>`, and never
 need this file.
