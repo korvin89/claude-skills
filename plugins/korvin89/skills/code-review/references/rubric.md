@@ -46,8 +46,8 @@ substance.
    always `nit`.
 
 **Focus areas** named by the reviewer are elevated priority: scrutinize them
-hard and report what you found there explicitly, including a plain «выглядит
-нормально» when that is the truth. Elevated priority raises attention; the other
+hard and report what you found there explicitly, including «замечаний нет» when that is
+the truth. Elevated priority raises attention; the other
 passes still run in full, and a focus area with nothing wrong yields no finding.
 
 ## Frontend layer (when the change touches FE)

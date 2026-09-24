@@ -1,8 +1,8 @@
 # Top-level review comment (disclaimer + legend)
 
 Posted as the body of the review whenever at least one finding is posted. On by
-default, declinable at Stop 2. Fixed boilerplate: it is not tone-adjusted and
-does not summarize the changes, and it always lists all four severity terms.
+default, declinable at Stop 2. Fixed boilerplate: it does not summarize the
+changes, and it always lists all four severity terms.
 
 - Comment language **Русский** → the RU template verbatim.
 - Comment language **English** → the EN template verbatim.

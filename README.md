@@ -6,8 +6,7 @@ project with `/plugin install` — they live here, not in the repos that use
 them, so nothing has to be committed into those projects.
 
 Skills are grouped under **`korvin89`**, a personal namespace plugin that can
-hold many skills; `code-review` is the first. Adding a skill later does not
-touch existing ones.
+hold many skills. Adding a skill later does not touch existing ones.
 
 ## Layout
 
@@ -20,14 +19,18 @@ claude-skills/
 │       ├── .claude-plugin/
 │       │   └── plugin.json         # plugin manifest
 │       └── skills/
-│           └── code-review/        # one skill → invoked as korvin89:code-review
-│               ├── SKILL.md        # the workflow
-│               ├── references/
-│               │   ├── rubric.md   # passes, severity/confidence, finding format
-│               │   └── legend.md   # the top-level review comment (RU/EN)
+│           ├── code-review/        # invoked as korvin89:code-review
+│           │   ├── SKILL.md        # the workflow
+│           │   ├── references/
+│           │   │   ├── rubric.md   # passes, severity/confidence, finding format
+│           │   │   └── legend.md   # the top-level review comment (RU/EN)
+│           │   └── scripts/
+│           │       ├── collect-diff.sh   # detects and prints what to review
+│           │       └── post-review.sh    # posts the batch as one PR review
+│           └── herdr-tab/          # invoked as korvin89:herdr-tab (by hand only)
+│               ├── SKILL.md
 │               └── scripts/
-│                   ├── collect-diff.sh   # detects and prints what to review
-│                   └── post-review.sh    # posts the batch as one PR review
+│                   └── rename.sh   # renames the current Herdr tab; no-op outside Herdr
 ├── README.md
 └── .gitignore
 ```
@@ -79,15 +82,17 @@ claude plugin validate ./plugins/korvin89
 
 ---
 
-## The `korvin89:code-review` skill
+## `korvin89:code-review`
 
 An interactive, curation-first code review. It collects the diff itself, reads
 the full surrounding context of each changed file, reviews in ordered passes
 (intent → correctness → architecture → tests → readability → nits) with a
 severity and a confidence per finding, optionally runs an independent second
 pass in a sub-agent, and then walks you through curation before anything is
-posted. The conversation is in Russian; the language and tone of posted comments
-are chosen at run time.
+posted. The conversation is in Russian; the language of posted comments is
+chosen at run time. The style is fixed everywhere — dump, questions, posted
+comments: dry, businesslike, no slang, no praise or grading of the reviewed
+code.
 
 The workflow itself is in
 [SKILL.md](plugins/korvin89/skills/code-review/SKILL.md); the review rules are
@@ -112,22 +117,22 @@ in [references/rubric.md](plugins/korvin89/skills/code-review/references/rubric.
 | `--branch` / `--working` | Force the mode instead of auto-detecting it. |
 | `--lang <code>` | Pre-fill the default for the comment-language question. |
 
-Everything else is asked in one prompt before the review: comment style
-(`сухо` / `вежливо`), whether to run the second pass, the comment language, and
-any focus areas to scrutinize.
+Everything else is asked in one prompt before the review: whether to run the
+second pass, the comment language, and any focus areas to scrutinize.
 
 Claude can also trigger the skill on its own when you ask it to "review this
 PR" or "review my changes".
 
 ### The flow (three stops)
 
-1. **Config** — one prompt with the four questions above.
+1. **Config** — one prompt with the three questions above. In PR mode the
+   Herdr tab (if any) is renamed to `pr-<id>`.
 2. **Curation** — every finding is dumped in Russian, numbered, with a
    severity (🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` / ❓ `question`) and a
    confidence. You reply with the numbers to keep and optional per-item edits,
    and whether to include the fixed legend comment (on by default).
 3. **Confirm or groom** — the final batch is rendered as it will be posted, in
-   your chosen language and tone. Grooming loops back to curation.
+   your chosen language. Grooming loops back to curation.
 
 With `--post`, the confirmed batch is posted as **one PR review**: inline
 comments on diff lines plus the legend as the review body. Every posted text
@@ -146,3 +151,16 @@ The skill reads it when present and folds it into the review: the generic
 rubric is the base, project conventions add to and override it, and on a direct
 conflict the project layer wins. A line `comment-language: en` (or `ru`, or any
 language name) in that file sets the repo's default comment language.
+
+## `korvin89:herdr-tab`
+
+Renames the current [Herdr](https://herdr.dev) tab. User-invoked only (no
+description is loaded into context), so it costs nothing until typed:
+
+```text
+/korvin89:herdr-tab pr-1234
+```
+
+Its script, `scripts/rename.sh <name>`, is what other skills call directly:
+outside Herdr (`HERDR_ENV` unset) it is a silent no-op, inside it runs
+`herdr tab rename` on the current tab. `code-review` uses it in PR mode.

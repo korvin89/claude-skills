@@ -16,13 +16,15 @@ You run a **workflow**: collect the diff, build real context around it, review
 it against the rubric, then walk the reviewer through a short curation loop
 before anything is posted. Every finding is located (`file:line`) and concrete.
 
-Files bundled with this skill:
+Files bundled with this plugin:
 
 - `${CLAUDE_SKILL_DIR}/references/rubric.md` — passes, frontend layer,
   severity + confidence, the finding format. Read before pass 1.
 - `${CLAUDE_SKILL_DIR}/references/legend.md` — the top-level review comment.
 - `${CLAUDE_SKILL_DIR}/scripts/collect-diff.sh` — collects the diff (Step 1).
 - `${CLAUDE_SKILL_DIR}/scripts/post-review.sh` — posts the batch (Step 9).
+- `${CLAUDE_PLUGIN_ROOT}/skills/herdr-tab/scripts/rename.sh` — names the
+  Herdr tab (Step 1); a no-op outside Herdr.
 
 ## Invariants
 
@@ -30,6 +32,10 @@ Files bundled with this skill:
   conversation — dump, questions, confirmations — is Russian.
 - **Comment language** is the language of the *posted* text only. Resolved at
   Stop 1.
+- **Style, everywhere** — the dump, the questions, the posted comments: dry and
+  businesslike, no slang, only the matter at hand. The code under review is
+  neither praised nor graded; a finding states the problem, why it matters, and
+  the fix.
 - **Severity tags** are `🔴 blocker` · `🟠 should-fix` · `🔵 nit` · `❓ question`:
   emoji, then the English term, unchanged in the dump, the legend, and posted
   comments, whatever the comment language.
@@ -68,26 +74,26 @@ and every comment already on the PR. Its exit codes:
 - `4` / `5` — bad argument / nothing to review. Relay the script's message in
   Russian and stop.
 
-In PR mode also emit one Russian line and continue without waiting:
+In PR mode also name the Herdr tab after the PR. Outside Herdr the script is a
+no-op; on failure relay its message in one line and continue:
 
-> Для порядка переименуй сессию: `/rename Review #<pr-id>`
+```
+bash "${CLAUDE_PLUGIN_ROOT}/skills/herdr-tab/scripts/rename.sh" "pr-<pr-id>"
+```
 
 ## Step 2 — Stop 1: configuration (one prompt)
 
 Skip under `--quick` (no second pass, no focus areas).
 
 Show the reviewer, in Russian, the mode and target, the changed files (count and
-the notable ones), and the PR title or branch name. Then ask **four questions in
-a single `AskUserQuestion` call**:
+the notable ones), and the PR title or branch name. Then ask **three questions
+in a single `AskUserQuestion` call**:
 
-1. **Стиль комментариев** — `сухо` (terse, imperative; for an agent audience) or
-   `вежливо` (for humans: suggestions and requests — «Предлагаю…», «Может,
-   стоит…»). Applies to posted text only.
-2. **Второй проход** — `да` / `нет`, default `нет` (Step 5).
-3. **Язык комментариев** — `Русский` / `English` / other via the free-text
+1. **Второй проход** — `да` / `нет`, default `нет` (Step 5).
+2. **Язык комментариев** — `Русский` / `English` / other via the free-text
    field. Default, first match wins: `--lang` → the `comment-language:` line of
    the conventions layer (Step 3) → English. Pre-select it.
-4. **На что смотреть особенно** — `Нет` (default), `Корректность`, `Тесты`, or
+3. **На что смотреть особенно** — `Нет` (default), `Корректность`, `Тесты`, or
    the reviewer types their own focus in the free-text field (a file, a module,
    a risk: «таймзоны в billing»). Whatever they type is the focus areas.
 
@@ -148,10 +154,10 @@ whole point.
 Present **all** findings in one batch, numbered from 1, in the rubric's finding
 format and order. Open with `🤖 **AI generated**`.
 
-Tone: neutral and direct. Skip praise; one honest line is enough when the
-change is solid. Assert what is wrong — uncertainty is expressed through
-`question` and the confidence axis, not through softened wording. When a real
-review found nothing worth raising, say so in one line.
+Style per the invariants: each finding states what is wrong, why it matters,
+and the fix. Uncertainty is expressed through `question` and the confidence
+axis, not through softened wording. When a real review found nothing worth
+raising, say so in one line.
 
 Under `--quick`, stop here.
 
@@ -171,10 +177,10 @@ Keep only the selected numbers and apply any per-item edits. The legend
 
 Render the batch exactly as it would be posted:
 
-- prose in the comment language and the chosen tone;
+- prose in the comment language, style per the invariants;
 - severity tags per the invariants; confidence and `✓✓` removed;
 - each item and the legend opened with `🤖 **AI generated**`;
-- the legend per `legend.md`, untouched by tone, unless declined at Stop 2.
+- the legend per `legend.md`, unless declined at Stop 2.
 
 Then ask in Russian: всё ок и постим — или ещё почитать и погрумить? Grooming
 loops back to Step 7. Proceed only on confirmation.
