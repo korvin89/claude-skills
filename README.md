@@ -27,7 +27,7 @@ claude-skills/
 │           │   └── scripts/
 │           │       ├── collect-diff.sh   # detects and prints what to review
 │           │       └── post-review.sh    # posts the batch as one PR review
-│           └── herdr-tab/          # invoked as korvin89:herdr-tab (by hand only)
+│           └── herdr-tab-rename/   # invoked as korvin89:herdr-tab-rename (by hand only)
 │               ├── SKILL.md
 │               └── scripts/
 │                   └── rename.sh   # renames the current Herdr tab; no-op outside Herdr
@@ -182,13 +182,13 @@ rubric is the base, project conventions add to and override it, and on a direct
 conflict the project layer wins. A line `comment-language: en` (or `ru`, or any
 language name) in that file sets the repo's default comment language.
 
-## `korvin89:herdr-tab`
+## `korvin89:herdr-tab-rename`
 
 Renames the current [Herdr](https://herdr.dev) tab. User-invoked only (no
 description is loaded into context), so it costs nothing until typed:
 
 ```text
-/korvin89:herdr-tab pr-1234
+/korvin89:herdr-tab-rename pr-1234
 ```
 
 Its script, `scripts/rename.sh <name>`, is what other skills call directly:
