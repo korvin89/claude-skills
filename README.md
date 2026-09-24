@@ -43,24 +43,44 @@ claude-skills/
 
 ## Install
 
-From any project (or globally), point Claude Code at this repo, then install
-the plugin:
+The marketplace is this repo on GitHub. Add it once, then install the plugin:
 
 ```text
-/plugin marketplace add /Users/alaev89/Desktop/pet-projects/claude-skills
+/plugin marketplace add korvin89/claude-skills
 /plugin install korvin89@claude-skills
 ```
 
-> The plugin used to be called `code-review`; it is now the `korvin89`
-> namespace. If you had the old one installed, remove it and install
-> `korvin89@claude-skills`.
+`claude plugin list` shows the installed version.
 
-`/plugin marketplace add` also accepts a GitHub `owner/repo` or a git URL once
-the repo is pushed somewhere. Update after pushing changes here:
+## Updating an installed plugin
 
-```text
-/plugin marketplace update claude-skills
-```
+Claude Code keeps two copies of a GitHub marketplace:
+
+- the **catalog**, a clone of this repo's `main` at
+  `~/.claude/plugins/marketplaces/claude-skills`;
+- the **installed plugin**, a copy at
+  `~/.claude/plugins/cache/claude-skills/korvin89/<version>`, pinned by the
+  `version` field of `plugin.json`.
+
+A change is only picked up when the version changes, so a release is:
+
+1. Bump `version` in `plugins/korvin89/.claude-plugin/plugin.json`. Without
+   the bump `/plugin update` finds nothing new, even after the catalog refresh.
+2. Merge to `main` and push. The catalog follows `main`; a release branch is
+   invisible to it.
+3. In Claude Code:
+
+   ```text
+   /plugin marketplace update claude-skills    # refresh the catalog clone
+   /plugin update korvin89@claude-skills       # install the new version into the cache
+   /reload-plugins                             # apply in the current session (or restart)
+   ```
+
+   The same works from a shell: `claude plugin marketplace update claude-skills`
+   and `claude plugin update korvin89@claude-skills`.
+
+Optional: `claude plugin tag --push` creates and pushes a `korvin89--v<version>`
+tag after checking that `plugin.json` and the marketplace entry agree.
 
 Validate the manifests before publishing:
 
@@ -68,6 +88,18 @@ Validate the manifests before publishing:
 claude plugin validate .
 claude plugin validate ./plugins/korvin89
 ```
+
+## Developing locally
+
+Load the plugin straight from the working tree for one session; it overrides
+the installed copy of the same name, so a release branch can be tried before it
+is merged:
+
+```text
+claude --plugin-dir ./plugins/korvin89
+```
+
+After editing files, `/reload-plugins` picks up the changes without a restart.
 
 ## Adding more skills later
 
