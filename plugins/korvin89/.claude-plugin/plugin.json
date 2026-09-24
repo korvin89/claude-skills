@@ -1,10 +1,10 @@
 {
   "name": "korvin89",
-  "version": "0.3.1",
-  "description": "korvin89's personal skill namespace for Claude Code. Ships an interactive, curation-first code-review workflow and a Herdr tab helper; more skills will live here over time.",
+  "version": "0.4.0",
+  "description": "korvin89's personal skill namespace for Claude Code. Ships an interactive, curation-first code-review workflow, a review-artifacts page builder and a Herdr tab helper; more skills will live here over time.",
   "author": {
     "name": "Evgenii Alaev",
     "email": "alaev89@yandex.ru"
   },
-  "keywords": ["korvin89", "code-review", "review", "git", "github", "pr", "frontend", "react", "typescript", "a11y", "herdr"]
+  "keywords": ["korvin89", "code-review", "review", "git", "github", "pr", "frontend", "react", "typescript", "a11y", "herdr", "artifacts", "screenshots"]
 }
