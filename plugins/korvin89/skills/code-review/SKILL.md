@@ -7,7 +7,7 @@ description: >-
   pass, then lets the reviewer pick which findings get posted. Use when asked
   to review a PR, review changes or a diff, or check code before merge.
 argument-hint: "[pr-number | pr-url] [--post] [--quick] [--branch]"
-allowed-tools: Read, Grep, Glob, Bash, Agent, AskUserQuestion
+allowed-tools: Read, Grep, Glob, Bash, Agent, AskUserQuestion, Artifact
 ---
 
 # Code review
@@ -25,6 +25,9 @@ Files bundled with this plugin:
 - `${CLAUDE_SKILL_DIR}/scripts/post-review.sh` — posts the batch (Step 9).
 - `${CLAUDE_PLUGIN_ROOT}/skills/herdr-tab-rename/scripts/rename.sh` — names the
   Herdr tab (Step 1); a no-op outside Herdr.
+- `${CLAUDE_PLUGIN_ROOT}/skills/review-artifacts/SKILL.md` — screenshot pairs
+  and configs on an artifact page for a finding marked `+артефакты` (Step 7).
+  Read only then.
 
 ## Invariants
 
@@ -166,11 +169,18 @@ Ask in Russian for a free-text reply, for example:
 
 > Ответь, какие пункты идут в финальный батч: номера через запятую (или «все»).
 > К любому пункту можешь добавить детали — например «4: добавь, что это ломает и
-> мобилку». Что не выбрано — не постим. Легенду (дисклеймер + теги) добавляем?
-> По умолчанию да.
+> мобилку». «4: +артефакты» — соберу скриншоты main/PR и конфиги на отдельную
+> страницу и подошью ссылку. Что не выбрано — не постим. Легенду (дисклеймер +
+> теги) добавляем? По умолчанию да.
 
 Keep only the selected numbers and apply any per-item edits. The legend
 (`references/legend.md`) is included unless declined. Wait for the answer.
+
+**Artifacts.** For every finding marked `+артефакты`, read
+`${CLAUDE_PLUGIN_ROOT}/skills/review-artifacts/SKILL.md` and follow it with
+that finding as the subject; append its final line (`Артефакты: <link>`, in the
+comment language) to the finding. Do this before Stop 3 so the links are part
+of the final batch.
 
 ## Step 8 — Stop 3: final batch
 

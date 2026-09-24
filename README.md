@@ -74,7 +74,9 @@ PR" or "review my changes".
 2. **Curation** — every finding is dumped in Russian, numbered, with a
    severity (🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` / ❓ `question`) and a
    confidence. You reply with the numbers to keep and optional per-item edits,
-   and whether to include the fixed legend comment (on by default).
+   and whether to include the fixed legend comment (on by default). `4: +артефакты`
+   attaches an artifact page (screenshot pairs main vs PR plus configs) to that
+   finding; see `korvin89:review-artifacts`.
 3. **Confirm or groom** — the final batch is rendered as it will be posted, in
    your chosen language. Grooming loops back to curation.
 
@@ -108,3 +110,21 @@ description is loaded into context), so it costs nothing until typed:
 Its script, `scripts/rename.sh <name>`, is what other skills call directly:
 outside Herdr (`HERDR_ENV` unset) it is a silent no-op, inside it runs
 `herdr tab rename` on the current tab. `code-review` uses it in PR mode.
+
+## `korvin89:review-artifacts`
+
+Builds one shareable artifact page for a review finding: a short text on top,
+a collapsed block of screenshot pairs (base vs PR, side by side), a collapsed
+block of the configs behind them. Publishes it with Claude Code's Artifact
+tool and returns the link; the page stays private until you press **Share**.
+User-invoked only, and read by `code-review` for findings marked `+артефакты`:
+
+```text
+/korvin89:review-artifacts stacked bar with negative values, default and dark theme
+```
+
+The skill does not know how a given repo renders screenshots: it asks once
+per run (command, story or fixture, viewport, theme), renders each pair in
+separate `git worktree`s so your checkout is untouched, and assembles the page
+with `scripts/build-page.sh` from a `manifest.json`. Requires `jq`; the
+Artifact tool needs a claude.ai login (CLI or desktop app).
