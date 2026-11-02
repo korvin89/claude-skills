@@ -207,7 +207,8 @@ it, and curation happens there.
    > ответ в 🤖-треде или комментарий, начинающийся с `ai:` или `ии:` (на любой
    > строке или под своим комментарием; `фш:` и `bb:` в другой раскладке тоже
    > пойму). Подхвачу, когда ты на минуту затихнешь, и сам уберу служебные
-   > реплики. Твои комментарии без префикса не трогаю.
+   > реплики. Команды — по-русски или по-английски. Твои комментарии без
+   > префикса не трогаю.
 
 Go on to Step 8 even when no finding went in: the reviewer can still call you
 with `ai:` from their own comments.
@@ -259,32 +260,35 @@ may write in the session meanwhile; answer as usual, the watcher keeps running.
 Then one Russian line per thread in the session (`path:line` — what was done),
 and arm the watcher again.
 
-| In the thread | You do |
+Commands come in Russian or English, as free text; the table gives both forms.
+The language of a command does not change the comment language.
+
+| In the thread (RU · EN) | You do |
 |---|---|
-| `удали` | delete the whole thread (`ai` root only; the reviewer deletes their own comments in GitHub) |
-| `короче`, `мягче`, `переформулируй: …`, `en` | rewrite the target in place |
-| `nit`, `should-fix`, `blocker`, `question` | change the tag; rewrite the text when the tag changes what it says |
-| `предложи фикс` | append a `suggestion` block that replaces exactly the commented line; a wider fix goes into a plain code block |
-| `где ещё?` | find the same problem elsewhere in the diff and add those `path:line` to the finding |
-| `артефакты` | follow `review-artifacts` with the finding as the subject; append its `Артефакты: <link>` line |
-| `почему?`, any question | answer with a reply; the thread stays open |
-| `ок`, `оставь` after your reply | delete the `cmd` comments and your replies; the target stays as it is |
-| `объедини с <link>` / `объедини с <path:line>`, one or more | merge the referenced threads into this one, which stays (see below) |
-| `ai: оформи` under the reviewer's own comment | rewrite their note into a finding — tag, problem, why, fix — keeping their point; add the marker, since the wording is now yours |
-| `ai: <hypothesis>` as a new comment on a line | check it against the code. Confirmed → rewrite this comment into a finding (it becomes the thread's `ai` root). Not confirmed → reply why; on «ок» delete the thread |
+| `удали` · `delete` | delete the whole thread (`ai` root only; the reviewer deletes their own comments in GitHub) |
+| `короче`, `мягче`, `переформулируй: …`, `en` · `shorter`, `softer`, `rephrase: …`, `ru` | rewrite the target in place |
+| `nit` · `should-fix` · `blocker` · `question` (same in both) | change the tag; rewrite the text when the tag changes what it says |
+| `предложи фикс` · `suggest fix` | append a `suggestion` block that replaces exactly the commented line; a wider fix goes into a plain code block |
+| `где ещё?` · `where else?` | find the same problem elsewhere in the diff and add those `path:line` to the finding |
+| `артефакты` · `artifacts` | follow `review-artifacts` with the finding as the subject; append its `Артефакты: <link>` line |
+| `почему?` · `why?`, any question | answer with a reply; the thread stays open |
+| `ок`, `оставь` · `ok`, `keep` after your reply | delete the `cmd` comments and your replies; the target stays as it is |
+| `объедини с <link \| path:line>` · `merge with <link \| path:line>`, one or more | merge the referenced threads into this one, which stays (see below) |
+| `ai: оформи` · `ai: write up` under the reviewer's own comment | rewrite their note into a finding — tag, problem, why, fix — keeping their point; add the marker, since the wording is now yours |
+| `ai: <hypothesis>` as a new comment on a line, either language | check it against the code. Confirmed → rewrite this comment into a finding (it becomes the thread's `ai` root). Not confirmed → reply why; on «ок» / `ok` delete the thread |
 
 **Merging.** Find each referenced thread in the state. A link carries a
 comment's `db_id` after `#discussion_r` or `#r`; `path:line` matches a thread's
 `path` — a file name is enough when unique — and `line`. Rewrite this thread's
 target into one finding that covers every place: the others' `path:line` in
 the text, the highest severity among the merged. A rewritten `own` target gets
-the marker, as with `оформи`. Then delete each merged thread whose root is
+the marker, as with `оформи` / `write up`. Then delete each merged thread whose root is
 `ai`, with all its comments. Any other merged thread stays — the reviewer's
 own comment is theirs to delete: fold its point in and name it in the session.
 A reference that matches nothing, or more than one thread, gets a reply asking
 which.
 
-**In the session** the reviewer can also say: «синк» — run a pass now; a
-request across the whole draft («убери все nit», «переведи всё на en») — apply
-it to every `ai` finding and report; «стоп» — stop the watcher and end the
-loop.
+**In the session** the reviewer can also say: «синк» · `sync` — run a pass
+now; a request across the whole draft («убери все nit» · `drop all nits`,
+«переведи всё на en» · `translate all to en`) — apply it to every `ai` finding
+and report; «стоп» · `stop` — stop the watcher and end the loop.

@@ -95,13 +95,30 @@ rules:
 The agent picks up commands once you have been quiet for about a minute,
 handles them in one pass, and removes your commands and its own `🤖💬` replies
 when a thread is resolved, so the draft stays ready to submit. A thread where
-the agent asked a question stays until you answer. Typical commands: `удали`,
-`короче`, `переформулируй: …`, `nit` / `blocker`, `предложи фикс` (adds a
-GitHub suggestion), `где ещё?`, `артефакты` (see `korvin89:review-artifacts`),
-`почему?`, `ок`, `объедини с <ссылка или path:line>` (the thread you write it
-in stays; a file name and a line are enough). In the session: «синк» runs a pass now, «стоп» stops
-watching. Watching ends by itself when you submit or discard the draft, or after
-two hours without commands.
+the agent asked a question stays until you answer. Watching ends by itself when
+you submit or discard the draft, or after two hours without commands.
+
+Commands are free text in Russian or English; these are the usual ones. In a
+🤖 thread no prefix is needed; elsewhere start with `ai:`.
+
+| Russian | English | What the agent does |
+|---|---|---|
+| `удали` | `delete` | deletes the 🤖 thread |
+| `короче`, `мягче`, `переформулируй: …` | `shorter`, `softer`, `rephrase: …` | rewrites the comment |
+| `en` / `ru` | `en` / `ru` | translates the comment |
+| `nit`, `should-fix`, `blocker`, `question` | same | changes the severity tag |
+| `предложи фикс` | `suggest fix` | adds a GitHub suggestion block |
+| `где ещё?` | `where else?` | lists other places with the same problem |
+| `артефакты` | `artifacts` | attaches a screenshot page (see `korvin89:review-artifacts`) |
+| `почему?` | `why?` | answers in the thread; the thread stays open |
+| `ок`, `оставь` | `ok`, `keep` | closes the discussion, keeps the comment |
+| `объедини с <ссылка \| path:line>` | `merge with <link \| path:line>` | folds those threads into this one; a file name and a line are enough |
+| `ai: оформи` | `ai: write up` | under your own comment: turns your note into a finding (gets the 🤖 marker) |
+| `ai: <гипотеза>` | `ai: <hypothesis>` | on a line: checks it; confirmed → becomes a finding, otherwise an answer |
+
+In the session: «синк» / `sync` runs a pass now, «стоп» / `stop` stops
+watching; requests across the whole draft («убери все nit» / `drop all nits`)
+work there too.
 
 ### Per-repo conventions layer (not shipped here)
 
