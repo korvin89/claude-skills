@@ -411,11 +411,12 @@ cmd_watch() {
   done
 
   # Mark the review's scratch as in use while watching: cleanup.sh warns
-  # before removing it (see cleanup/scripts/cleanup.sh for the layout).
+  # before removing it (see cleanup/scripts/cleanup.sh for the layout). Only an
+  # existing scratch is marked; the watcher never creates one.
   local common
   if common="$(git rev-parse --git-common-dir 2>/dev/null)"; then
     pidfile="$(CDPATH='' cd -P -- "$common" && pwd -P)/code-review/pr-$num/watch.pid"
-    mkdir -p "${pidfile%/*}" && printf '%s\n' "$$" > "$pidfile"
+    if [ -d "${pidfile%/*}" ]; then printf '%s\n' "$$" > "$pidfile"; else pidfile=""; fi
   fi
 
   local start now s review fp prev="" since=0 fails=0

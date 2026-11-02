@@ -187,7 +187,8 @@ if [ -n "$pr" ]; then
     --jq "$gist"' .[] | "- [inline] \(.path):\(.line // .original_line) \(.user.login): \(.body | gist)"' \
     2>/dev/null || err "(could not list inline review comments)"
 
-  files="$(gh pr diff "$pr" --name-only)"
+  # File names from the API: `gh pr diff --name-only` escapes non-ASCII paths.
+  files="$(gh api --hostname "$host" "repos/$owner/$repo/pulls/$num/files?per_page=100" --paginate --jq '.[].filename')"
   [ -n "$files" ] || die 5 "Pull request #$num has an empty diff — nothing to review."
   printf '\n### CHANGED FILES\n%s\n\n### DIFF\n' "$files"
   gh pr diff "$pr"
