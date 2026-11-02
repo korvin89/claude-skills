@@ -1,31 +1,46 @@
 #!/usr/bin/env bash
 #
-# collect-diff.sh — auto-detect what to review and print it.
+# collect-diff.sh — detect what to review and print it.
 #
 # Usage:
-#   collect-diff.sh [PR_NUMBER | #PR_NUMBER | PR_URL] [--branch] [--post] [--quick]
+#   collect-diff.sh [PR_NUMBER | #PR_NUMBER | PR_URL] [--quick]
 #
-# The whole skill argument string can be passed through verbatim: --post and
-# --quick are accepted and ignored here. Anything else that is not a PR
-# reference or --branch is an error (exit 4) — the script never guesses a mode
-# from a malformed argument.
+# The whole skill argument string can be passed through verbatim: --quick is
+# accepted and ignored here. Anything else that is not a PR reference is an
+# error (exit 4) — the script never guesses a mode from a malformed argument.
 #
-# Detection order (first match wins):
-#   1. PR mode      — a PR reference was given. Requires `gh`.
-#   2. Working-tree — uncommitted changes exist.
-#   3. Branch mode  — current branch vs its merge-base with the default branch
-#                     (origin/<default> preferred over the local branch), or --branch.
+# Modes:
+#   pr     a PR reference was given. Requires `gh`. The PR head is fetched from
+#          the git remote that points at the PR's repository and checked out,
+#          detached, into <scratch>/head: files are read at the PR's version
+#          whatever the current checkout is, and the current checkout is not
+#          touched. A later run for the same PR moves that worktree to the new
+#          head.
+#   local  no PR reference: everything not yet in the default branch — the
+#          commits since the merge-base with origin/<default> (the local
+#          default branch when there is no origin), uncommitted changes and
+#          untracked files.
+#
+# <scratch> is <git-common-dir>/code-review/pr-<N>, or local-<id> (one per
+# checkout) without a PR: the one place for everything a review leaves behind.
+# Its layout and its removal live in ../../cleanup/scripts/cleanup.sh. This
+# script records the PR's URL in it (pr.url), never moves a head/ that holds
+# local changes, and only lists other reviews' scratch in a note — it removes
+# nothing.
 #
 # Output is plain text; every section starts with "### ":
-#   ### MODE: pr|working|branch
+#   ### MODE: pr|local
 #   ### TARGET: <human description>
-#   ### NOTE: …                                   (warnings, optional)
-#   ### PR TITLE / ### PR BODY / ### EXISTING COMMENTS   (PR mode only)
+#   ### SCRATCH: <dir>                            (created on demand in local mode)
+#   ### WORKTREE: <path> (<sha>)                  (pr mode, when the head is checked out)
+#   ### NOTE: …                                   (warnings and the other reviews' scratch, optional)
+#   ### PR TITLE / ### PR BODY / ### EXISTING COMMENTS   (pr mode only)
 #   ### CHANGED FILES
 #   ### DIFF
-#   ### UNTRACKED FILES                           (working mode, when present)
+#   ### UNTRACKED FILES                           (local mode, when present)
 #
-# Exit codes: 0 ok · 2 not a git repo · 3 gh missing · 4 bad argument · 5 nothing to review
+# Exit codes: 0 ok · 1 gh failed (PR not found, auth) · 2 not a git repo · 3 gh missing
+#             · 4 bad argument, or the PR's scratch belongs to another PR · 5 nothing to review
 
 set -euo pipefail
 
@@ -38,12 +53,10 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
 
 # ------------------------------------------------------------- arguments ----
 pr=""
-force_branch=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --branch)       force_branch=1 ;;
-    --post|--quick) ;;                                   # skill flags, not ours
-    --*)            die 4 "Unknown flag: '$1'." ;;
+    --quick) ;;                                              # a skill flag, not ours
+    --*)     die 4 "Unknown flag: '$1'." ;;
     *)
       a="${1#\#}"                                            # allow "#123"
       case "$a" in
@@ -54,12 +67,20 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-if [ -n "$pr" ] && [ "$force_branch" = 1 ]; then
-  die 4 "--branch cannot be combined with a PR reference."
-fi
 
-# Base ref for branch comparisons. Prefer origin/<default>: a stale local
-# main would leak upstream commits into the diff.
+scratch_root="$(CDPATH='' cd -P -- "$(git rev-parse --git-common-dir)" && pwd -P)/code-review"
+cleanup="$(dirname "$0")/../../cleanup/scripts/cleanup.sh"
+
+# others <key> — a note naming the other reviews' scratch, if there is any.
+others() {
+  local list=""
+  [ -f "$cleanup" ] && list="$(bash "$cleanup" list --except "$1" 2>/dev/null \
+    | awk -F'\t' '$1 ~ /^(pr-|local-)/ { printf "%s%s (%s, %s)", sep, $1, $2, $3; sep = ", " }')"
+  [ -z "$list" ] || printf '### NOTE: scratch of other reviews: %s — /korvin89:cleanup <pr> removes one\n' "$list"
+}
+
+# Base ref for local comparisons. Prefer origin/<default>: a stale local main
+# would leak upstream commits into the diff.
 base_ref() {
   local name b
   name="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
@@ -72,6 +93,45 @@ base_ref() {
   return 1
 }
 
+# pr_worktree <owner> <repo> <num> — check the PR head out into the review
+# worktree; print "<path>\t<sha>", or a reason on stderr and return 1.
+pr_worktree() {
+  local owner="$1" repo="$2" num="$3" want remote="" name url _ wt sha
+  want="$(printf '/%s/%s' "$owner" "$repo" | tr '[:upper:]' '[:lower:]')"
+  # Any remote URL form ends in /owner/repo once ':' is '/' and .git is gone.
+  while read -r name url _; do
+    url="$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]' | tr ':' '/')"
+    url="${url%/}"; url="${url%.git}"
+    case "$url" in *"$want") remote="$name"; break ;; esac
+  done < <(git remote -v | awk '$3 == "(fetch)"')
+  [ -n "$remote" ] || { err "no git remote points at $owner/$repo"; return 1; }
+
+  git fetch --quiet --no-tags "$remote" "pull/$num/head" 2>/dev/null \
+    || { err "git fetch $remote pull/$num/head failed"; return 1; }
+  sha="$(git rev-parse FETCH_HEAD)"
+  wt="$scratch_root/pr-$num/head"
+  if [ -e "$wt/.git" ]; then
+    local dirty old
+    dirty="$(git -C "$wt" status --porcelain 2>/dev/null)" \
+      || { err "git cannot read $wt (was the repository moved?); /korvin89:cleanup $num and run again"; return 1; }
+    if [ -n "$dirty" ]; then
+      # Never throw away changes someone made in head/: keep it where it is.
+      old="$(git -C "$wt" rev-parse HEAD)"
+      printf '%s\t%s\t%s\n' "$wt" "$old" "head/ has local changes and was not moved to the PR head $sha; its files may be outdated"
+      return 0
+    fi
+    git -C "$wt" checkout --quiet --detach "$sha" 2>/dev/null \
+      || { err "could not move $wt to $sha"; return 1; }
+  else
+    mkdir -p "$scratch_root/pr-$num"
+    # --force only lets the path be reused when its folder was deleted by hand
+    # while git still lists it; the checkout is detached, no branch is taken.
+    git worktree add --quiet --force --detach "$wt" "$sha" 2>/dev/null \
+      || { err "git worktree add $wt failed"; return 1; }
+  fi
+  printf '%s\t%s\n' "$wt" "$sha"
+}
+
 # --------------------------------------------------------------- PR mode ----
 if [ -n "$pr" ]; then
   command -v gh >/dev/null 2>&1 || {
@@ -79,16 +139,39 @@ if [ -n "$pr" ]; then
     err "Install it: $GH_DOCS"
     exit 3
   }
-  url="$(gh pr view "$pr" --json url --jq .url)"
+  head="$(gh pr view "$pr" --json number,url,baseRefName,headRefName \
+    --jq '.url, "### MODE: pr", "### TARGET: pull request #\(.number) \(.url) — \(.headRefName) → \(.baseRefName)"')"
+  url="${head%%$'\n'*}"
   rest="${url#*://}"; host="${rest%%/*}"; rest="${rest#*/}"
   owner="${rest%%/*}"; rest="${rest#*/}"; repo="${rest%%/*}"; num="${url##*/}"
+  printf '%s\n' "${head#*$'\n'}"
+
+  # The scratch is keyed by number; pr.url says which repository's PR it is.
+  scratch="$scratch_root/pr-$num"
+  if [ -f "$scratch/pr.url" ] \
+     && [ "$(tr '[:upper:]' '[:lower:]' < "$scratch/pr.url")" != "$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')" ]; then
+    die 4 "The scratch $scratch belongs to $(cat "$scratch/pr.url"). Remove it with /korvin89:cleanup $(cat "$scratch/pr.url") and run again."
+  fi
+  mkdir -p "$scratch"
+  printf '%s\n' "$url" > "$scratch/pr.url"
+  printf '### SCRATCH: %s\n' "$scratch"
+  others "pr-$num"
+
+  reason="$(mktemp)"
+  trap 'rm -f "$reason"' EXIT
+  if wt="$(pr_worktree "$owner" "$repo" "$num" 2>"$reason")"; then
+    IFS=$'\t' read -r wt_path wt_sha wt_note <<<"$wt"
+    printf '### WORKTREE: %s (%s) — the PR head; read files here, not in the current checkout\n' "$wt_path" "$wt_sha"
+    [ -z "$wt_note" ] || printf '### NOTE: %s\n' "$wt_note"
+  else
+    printf '### NOTE: the PR head is not checked out (%s). Review from the diff below: files in the current checkout may not be the PR version.\n' \
+      "$(tail -n 1 "$reason")"
+  fi
 
   # gist: the first informative line of a comment (skipping the AI marker), truncated.
   gist='def gist: split("\n") | map(select(length > 0 and . != "🤖 **AI generated**")) | (.[0] // "") | .[0:160];'
 
-  gh pr view "$pr" --json number,url,title,body,baseRefName,headRefName,comments,reviews --jq "$gist"'
-    "### MODE: pr",
-    "### TARGET: pull request #\(.number) \(.url) — \(.headRefName) → \(.baseRefName)",
+  gh pr view "$pr" --json title,body,comments,reviews --jq "$gist"'
     "",
     "### PR TITLE",
     .title,
@@ -104,55 +187,50 @@ if [ -n "$pr" ]; then
     --jq "$gist"' .[] | "- [inline] \(.path):\(.line // .original_line) \(.user.login): \(.body | gist)"' \
     2>/dev/null || err "(could not list inline review comments)"
 
-  files="$(gh pr diff "$pr" --name-only)"
+  # File names from the API: `gh pr diff --name-only` escapes non-ASCII paths.
+  files="$(gh api --hostname "$host" "repos/$owner/$repo/pulls/$num/files?per_page=100" --paginate --jq '.[].filename')"
   [ -n "$files" ] || die 5 "Pull request #$num has an empty diff — nothing to review."
   printf '\n### CHANGED FILES\n%s\n\n### DIFF\n' "$files"
   gh pr diff "$pr"
   exit 0
 fi
 
-# ------------------------------------------------------ Working-tree mode ----
-if [ "$force_branch" = 0 ] && [ -n "$(git status --porcelain)" ]; then
-  # Diff against HEAD, or the empty tree when the repo has no commits yet.
-  if git rev-parse --verify -q HEAD >/dev/null 2>&1; then
-    work_base="HEAD"
+# ------------------------------------------------------------ local mode ----
+note=""
+cur="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || git rev-parse --short HEAD)"
+if git rev-parse --verify -q HEAD >/dev/null 2>&1; then
+  if base="$(base_ref)"; then
+    from="$(git merge-base "$base" HEAD 2>/dev/null)" || {
+      from=HEAD
+      note="### NOTE: $cur shares no history with $base; only uncommitted changes are reviewed."
+    }
   else
-    work_base="$(git hash-object -t tree /dev/null)"
+    from=HEAD; base=""
+    note="### NOTE: no origin/<default>, main or master; only uncommitted changes are reviewed."
   fi
-  printf '### MODE: working\n### TARGET: working tree (staged + unstaged vs %s)\n' "$work_base"
-
-  # The branch's own commits are NOT in this diff; say so when there are any.
-  if base="$(base_ref)" && [ "$work_base" = HEAD ]; then
-    ahead="$(git rev-list --count "$base..HEAD" 2>/dev/null || echo 0)"
-    if [ "$ahead" -gt 0 ]; then
-      printf '### NOTE: branch %s is %s commit(s) ahead of %s; those commits are not in this diff. Re-run with --branch to review them instead.\n' \
-        "$(git rev-parse --abbrev-ref HEAD)" "$ahead" "$base"
-    fi
-  fi
-
-  files="$(git -c core.quotepath=false diff --name-only "$work_base")"
-  # New, never-added files do not appear in `git diff`; surface them so the
-  # reviewer can read them directly (the index is left untouched).
-  untracked="$(git ls-files --others --exclude-standard)"
-  if [ -z "$files" ] && [ -z "$untracked" ]; then
-    die 5 "Working tree has no changes — nothing to review."
-  fi
-  printf '\n### CHANGED FILES\n%s\n\n### DIFF\n' "$files"
-  git diff "$work_base"
-  if [ -n "$untracked" ]; then
-    printf '\n### UNTRACKED FILES (not in diff — read these directly)\n%s\n' "$untracked"
-  fi
-  exit 0
+  ahead="$(git rev-list --count "$from..HEAD")"
+else
+  # No commits yet: everything in the working tree is new.
+  from="$(git hash-object -t tree /dev/null)"; base=""; ahead=0; cur="$cur (no commits yet)"
 fi
 
-# ------------------------------------------------------------ Branch mode ----
-base="$(base_ref)" || die 4 "Cannot determine the default branch (no origin/HEAD, main, or master)."
-cur="$(git rev-parse --abbrev-ref HEAD)"
-if [ "$(git rev-parse "$base")" = "$(git rev-parse HEAD)" ]; then
-  die 5 "HEAD is at $base with a clean working tree — nothing to review. Check out a feature branch or pass a PR reference."
+files="$(git -c core.quotepath=false diff --name-only "$from")"
+# New, never-added files do not appear in `git diff`; list them so the reviewer
+# can read them directly (the index is left untouched).
+untracked="$(git -c core.quotepath=false ls-files --others --exclude-standard --full-name -- :/)"
+[ -n "$files$untracked" ] \
+  || die 5 "Nothing to review: $cur has no commits beyond ${base:-HEAD} and the working tree is clean. Pass a PR reference to review a pull request."
+
+target="$cur"
+[ -n "$base" ] && target="$target: $ahead commit(s) since $base (merge-base $(git rev-parse --short "$from"))"
+[ -n "$(git status --porcelain)" ] && target="$target + uncommitted changes"
+# One local scratch per checkout (cleanup.sh derives the same key).
+key="local-$(git rev-parse --show-toplevel | cksum | cut -d' ' -f1)"
+printf '### MODE: local\n### TARGET: %s\n### SCRATCH: %s\n' "$target" "$scratch_root/$key"
+[ -z "$note" ] || printf '%s\n' "$note"
+others "$key"
+printf '\n### CHANGED FILES\n%s\n\n### DIFF\n' "$files"
+git diff "$from"
+if [ -n "$untracked" ]; then
+  printf '\n### UNTRACKED FILES (not in diff — read these directly)\n%s\n' "$untracked"
 fi
-files="$(git -c core.quotepath=false diff --name-only "$base...HEAD")"
-[ -n "$files" ] || die 5 "Branch $cur has no changes against $base — nothing to review."
-printf '### MODE: branch\n### TARGET: %s...%s (base: %s)\n\n### CHANGED FILES\n%s\n\n### DIFF\n' \
-  "$base" "$cur" "$base" "$files"
-git diff "$base...HEAD"

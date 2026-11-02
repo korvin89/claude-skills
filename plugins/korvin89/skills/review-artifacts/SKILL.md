@@ -38,11 +38,17 @@ failure you cannot fix from the error.
 
 ## Step 3 — Produce the files
 
+All files go into `<scratch>/artifacts/<slug>/`. `<scratch>` is the
+`### SCRATCH:` dir when called from `code-review`; invoked by hand, it is
+printed by `bash "${CLAUDE_PLUGIN_ROOT}/skills/cleanup/scripts/cleanup.sh" path
+'<pr-url | local>'` (the PR URL, so the scratch records whose it is). Never write to `/tmp`; `/korvin89:cleanup` removes the
+scratch later.
+
 Never switch the reviewer's checkout: one `git worktree add` per ref under
-`/tmp/review-artifacts/<slug>/wt-<ref>`, removed with `git worktree remove` at
-the end. Render each pair at the **same viewport and device scale factor** on
+`<scratch>/artifacts/<slug>/wt-<ref>`, removed with `git worktree remove` once
+the screenshots are taken. Render each pair at the **same viewport and device scale factor** on
 both sides; scale factor 1 unless detail needs 2 (the page limit is 16 MiB).
-Write everything into `/tmp/review-artifacts/<slug>/`:
+Write into `<scratch>/artifacts/<slug>/`:
 
 - `<pair>-base.png`, `<pair>-head.png`;
 - `<pair>.json` — the config that produced the pair, verbatim;
@@ -66,7 +72,7 @@ per pair.
 ## Step 4 — Build and publish
 
 ```
-bash "${CLAUDE_SKILL_DIR}/scripts/build-page.sh" /tmp/review-artifacts/<slug>
+bash "${CLAUDE_SKILL_DIR}/scripts/build-page.sh" <scratch>/artifacts/<slug>
 ```
 
 The script inlines the images and writes `index.html`; exit 7 means the page
