@@ -22,6 +22,9 @@
 #   task.sh unpark <key> <id>
 #   task.sh seen <key> <comment-id>…
 #                                comments read that ask for nothing
+#   task.sh activate <key>       this Claude session works the task now: the
+#                                guard hook confines edits to its worktrees
+#   task.sh deactivate <key>     lift that (pause, stop, done)
 #
 # Keys: an external tracker key lower-cased (abc-123), issue-<N>, pr-<N>, or
 # t-<yyyymmdd>-<slug> for a task given as text. Matching of existing work is
@@ -34,7 +37,7 @@
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
-usage() { die 4 "Usage: task.sh resolve|init|list|show|checks|unit|park|unpark|seen … (see the header)"; }
+usage() { die 4 "Usage: task.sh resolve|init|list|show|checks|unit|park|unpark|seen|activate|deactivate … (see the header)"; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die 2 "Not inside a git repository."
 [ $# -ge 1 ] || usage
 cmd="$1"; shift
@@ -180,6 +183,17 @@ case "$cmd" in
     key="$1"; shift
     f="$(task_dir "$key")/ledger.json"
     jq --args '.seen = (.seen + $ARGS.positional | unique)' "$@" < "$f" > "$f.tmp" && mv "$f.tmp" "$f" ;;
+
+  activate)
+    [ $# -eq 1 ] || usage
+    task_lock "$1"
+    printf '%s\n' "${CLAUDE_CODE_SESSION_ID:-shell-$PPID}" > "$(task_dir "$1")/active"
+    printf 'task %s is active in this session\n' "$1" ;;
+
+  deactivate)
+    [ $# -eq 1 ] || usage
+    rm -f "$(task_dir "$1")/active"
+    printf 'task %s is no longer active\n' "$1" ;;
 
   *) usage ;;
 esac
