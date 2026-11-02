@@ -30,5 +30,5 @@ tag.
   no manifest change. A separate plugin needs
   `plugins/<plugin>/.claude-plugin/plugin.json` and an entry in
   `marketplace.json`.
-- Scripts are tested against throwaway git repos and a `gh` / `herdr` shim on
-  `PATH`; nothing touches a live PR or Herdr session.
+- Scripts are tested against throwaway git repos and a `gh` shim on `PATH`;
+  nothing touches a live PR.

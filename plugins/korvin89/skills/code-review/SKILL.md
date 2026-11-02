@@ -23,8 +23,6 @@ Files bundled with this plugin:
 - `${CLAUDE_SKILL_DIR}/references/legend.md` — the top-level review comment.
 - `${CLAUDE_SKILL_DIR}/scripts/collect-diff.sh` — collects the diff (Step 1).
 - `${CLAUDE_SKILL_DIR}/scripts/post-review.sh` — posts the batch (Step 9).
-- `${CLAUDE_PLUGIN_ROOT}/skills/herdr-tab-rename/scripts/rename.sh` — names the
-  Herdr tab (Step 1); a no-op outside Herdr.
 - `${CLAUDE_PLUGIN_ROOT}/skills/review-artifacts/SKILL.md` — screenshot pairs
   and configs on an artifact page for a finding marked `+артефакты` (Step 7).
   Read only then.
@@ -75,13 +73,6 @@ and every comment already on the PR. Its exit codes:
   > Install it: https://cli.github.com/
 - `4` / `5` — bad argument / nothing to review. Relay the script's message in
   Russian and stop.
-
-In PR mode also name the Herdr tab after the PR. Outside Herdr the script is a
-no-op; on failure relay its message in one line and continue:
-
-```
-bash "${CLAUDE_PLUGIN_ROOT}/skills/herdr-tab-rename/scripts/rename.sh" "pr-<pr-id>"
-```
 
 ## Step 2 — Stop 1: configuration (one prompt)
 

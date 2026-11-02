@@ -69,8 +69,7 @@ PR" or "review my changes".
 
 ### The flow (three stops)
 
-1. **Config** — one prompt with the three questions above. In PR mode the
-   Herdr tab (if any) is renamed to `pr-<id>`.
+1. **Config** — one prompt with the three questions above.
 2. **Curation** — every finding is dumped in Russian, numbered, with a
    severity (🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` / ❓ `question`) and a
    confidence. You reply with the numbers to keep and optional per-item edits,
@@ -97,19 +96,6 @@ The skill reads it when present and folds it into the review: the generic
 rubric is the base, project conventions add to and override it, and on a direct
 conflict the project layer wins. A line `comment-language: en` (or `ru`, or any
 language name) in that file sets the repo's default comment language.
-
-## `korvin89:herdr-tab-rename`
-
-Renames the current [Herdr](https://herdr.dev) tab. User-invoked only (no
-description is loaded into context), so it costs nothing until typed:
-
-```text
-/korvin89:herdr-tab-rename pr-1234
-```
-
-Its script, `scripts/rename.sh <name>`, is what other skills call directly:
-outside Herdr (`HERDR_ENV` unset) it is a silent no-op, inside it runs
-`herdr tab rename` on the current tab. `code-review` uses it in PR mode.
 
 ## `korvin89:review-artifacts`
 
