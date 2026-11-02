@@ -48,7 +48,7 @@ in [references/rubric.md](plugins/korvin89/skills/code-review/references/rubric.
 
 ```text
 /korvin89:code-review                 # review your local changes: everything not yet in origin/<default>
-/korvin89:code-review 1234            # review PR #1234 into your draft review (needs gh and jq)
+/korvin89:code-review 1234            # review PR #1234 into your draft review (needs gh and jq 1.6+)
 /korvin89:code-review --quick         # single pass, dump findings, no questions, no draft
 ```
 
@@ -62,8 +62,11 @@ fetches the head from the git remote that points at the PR's repository into a
 worktree in the review's scratch dir, `.git/code-review/pr-<N>/`. Your checkout
 and branch stay as they are; run the skill from a clone of the PR's repository.
 Everything else the review needs (the findings batch, artifact screenshots)
-goes into the same dir, never into `/tmp`. It is removed when the run ends;
-see `korvin89:cleanup`.
+goes into the same dir, never into `/tmp`. The dir is removed when the PR run
+ends (Submit, a discarded draft, «стоп», the end of `--quick`). It is kept when
+watching stops on its own (two idle hours, an auth or network error), so
+«синк» can resume, and kept when cleanup's checks find something. Every run
+lists the other reviews' dirs; `korvin89:cleanup` removes them.
 
 Everything else is asked in one prompt before the review: whether to run the
 second pass, the comment language, and any focus areas to scrutinize.
@@ -90,7 +93,9 @@ PR" or "review my changes".
 Everything in the draft is under your account, so the agent goes by these
 rules:
 
-- a reply in a thread that starts with a 🤖 finding is addressed to the agent;
+- a reply in a thread that starts with a 🤖 finding is addressed to the agent,
+  and so is any reply after the agent's own `🤖💬` reply in a thread, until the
+  agent closes that discussion;
 - anywhere else, a comment starting with `ai:` is addressed to the agent: under
   your own comment («ai: оформи», «ai: короче, на en») or as a new comment on a
   line («ai: тут гонка с refetch?»). `ии:` works too, and so do both typed in
@@ -157,29 +162,33 @@ language name) in that file sets the repo's default comment language.
 Removes what the review skills keep for one pull request:
 `<repo>/.git/code-review/pr-<N>/` — the PR head worktree, the findings batch,
 and the screenshots, configs and worktrees of `review-artifacts`. User-invoked
-only:
+only, and only for the review you name:
 
 ```text
-/korvin89:cleanup 1234     # the scratch of PR #1234
-/korvin89:cleanup local    # the scratch of a review without a PR
+/korvin89:cleanup 1234     # the scratch of PR #1234 (also #1234, pr-1234 or the PR URL)
+/korvin89:cleanup local    # the scratch of a review without a PR, in this checkout
 /korvin89:cleanup          # lists what exists; removes nothing
 ```
 
-Before removing anything it checks that the scratch belongs to that PR and is
-not in use:
+Before removing anything it checks that the scratch belongs to that review and
+is not in use:
 
+- the scratch records the PR URL (or the checkout) it was made for, and it
+  matches;
 - a git remote of this repository points at the PR's repository;
-- `head/` is the PR's head or an older head of it;
-- no worktree has uncommitted or untracked files;
+- every worktree in it can be read by git and has no uncommitted or untracked
+  files;
 - the session is not inside the scratch;
 - no draft watcher runs for the PR.
 
-When a check fails it lists why and asks before removing.
+When a check fails it shows why and asks; a "yes" holds only for exactly the
+warnings shown. Only git's records of worktrees inside that scratch are
+dropped; your own worktrees are never pruned.
 
-`code-review` runs the same script when a PR run ends, and keeps the scratch
-when a check fails. Every review run also removes the scratch of other merged
-or closed PRs that passes all checks. Published artifact pages and draft
-reviews are never touched.
+`code-review` runs the same script when a PR run ends and keeps the scratch
+when a check fails. Nothing is ever removed without a review named: other
+reviews' scratch is only listed when a review starts. Published artifact pages
+and draft reviews are never touched.
 
 ## `korvin89:review-artifacts`
 

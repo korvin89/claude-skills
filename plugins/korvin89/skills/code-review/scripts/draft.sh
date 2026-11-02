@@ -6,20 +6,25 @@
 # review per user per PR.
 #
 # Usage:
-#   draft.sh add    <pr> <batch.json> [--dry-run]  add AI findings as draft threads
+#   draft.sh add    <pr> <batch.json> [--head <sha>] [--dry-run]
+#                                                  add AI findings as draft threads
 #   draft.sh state  <pr>                           print the draft as JSON
 #   draft.sh reply  <pr> <thread-id>               agent reply in a thread (body on stdin)
 #   draft.sh edit   <pr> <comment-id>              replace a comment body (body on stdin)
 #   draft.sh delete <pr> <comment-id>...           delete draft comments, newest first
-#   draft.sh watch  <pr> [--interval S] [--quiet S] [--timeout S]
+#   draft.sh watch  <pr> [--review <id>] [--interval S] [--quiet S] [--timeout S]
 #
-# <pr> is a number, #number or a …/pull/N URL.
+# <pr> is a …/pull/N URL — or a number, which gh resolves against the current
+# directory's repository.
 #
 # batch.json for add:
 #   { "comments": [ { "path": "src/x.ts", "line": 42, "body": "🔴 **blocker** — …" } ] }
-#   `line` is a line of the file at the PR head (new side). A line outside the
-#   diff becomes a file-level thread with `path:line` on top; a file outside the
-#   diff is skipped and reported. The AI marker is prepended when missing.
+#   `line` is a line of the file at the PR head (new side). Commentable lines
+#   come from the PR's file list (GitHub API), not from parsing a diff. A line
+#   outside the diff becomes a file-level thread with `path:line` on top; a
+#   file outside the diff is skipped and reported. The AI marker is prepended
+#   when missing. --head <sha> refuses (exit 8, nothing added) when the PR head
+#   is no longer that commit, so findings never land on lines that moved.
 #
 # Comment kinds in `state` (draft comments are always the reviewer's account):
 #   ai         a finding: starts with "🤖 **AI generated**"
@@ -27,40 +32,46 @@
 #   cmd        addressed to the agent: starts with "ai:" — also "ии:", or either
 #              typed in the other keyboard layout ("фш:", "bb:"), the colon
 #              included ("фшЖ", "bb^", "bb%") — or is any other reply in a
-#              thread whose root is an `ai` finding
+#              thread whose root is an `ai` finding or a cmd, or that follows
+#              an agent reply in its thread
 #   own        the reviewer's own review comment
 #   published  already submitted, by anyone; context only
 # A thread is actionable when its latest cmd/bot comment is a cmd.
 #
-# Guards: edit refuses published comments; delete refuses own and published
-# ones (and deletes nothing when any id is refused); reply prepends "🤖💬"
-# when missing and only goes into threads that hold draft comments.
+# Guards: edit refuses published comments and keeps the marker of an `ai` or
+# `bot` comment; delete refuses own and published ones (and deletes nothing
+# when any id is refused); reply prepends "🤖💬" when missing and only goes
+# into threads that hold draft comments.
 #
 # watch polls the draft every --interval seconds (default 20), prints one line
-# and exits 0:
+# and exits:
 #   ACTIONABLE <n>    actionable threads exist and their cmd comments have not
 #                     changed for --quiet seconds (default 60)
-#   SUBMITTED <url>   the draft seen earlier was submitted
-#   DISCARDED         the draft seen earlier is gone without a submit
-#   IDLE              --timeout seconds passed (default 7200) and no command is
-#                     waiting; a command found after a long laptop sleep still
-#                     gets its ACTIONABLE
-#   AUTH <message>    gh is not authenticated (HTTP 401 or no login): exit 1 at
-#                     once, as every later poll would fail alike
-# Five failed polls in a row print "ERROR <message>" and exit 1. While watch
-# runs, <git-common-dir>/code-review/pr-<N>/watch.pid holds its pid.
+#   SUBMITTED <url>   the draft was submitted
+#   DISCARDED         the draft is gone without a submit
+#   IDLE              a successful poll found no command waiting after
+#                     --timeout seconds (default 7200)
+#   AUTH <message>    gh is not authenticated (HTTP 401 or no login), at start
+#                     or later: exit 1 at once, as every later poll would fail
+#   ERROR <message>   the PR lookup at start failed, or five polls in a row did:
+#                     exit 1
+# A draft counts as seen once a poll finds it, or from the start with --review
+# <id> (the `review` of the last `state`), so a submit between two watchers is
+# still SUBMITTED. While watch runs, <git-common-dir>/code-review/pr-<N>/watch.pid
+# holds its pid.
 #
 # Every GitHub call is cut after DRAFT_CALL_DEADLINE seconds (default 30), so a
 # hung network call fails like any other instead of stalling the watcher.
 #
-# Requires: gh (authenticated) and jq.
+# Requires: gh (authenticated) and jq 1.6+.
 # Exit codes: 0 ok · 1 GitHub error · 3 gh missing · 4 bad usage · 5 nothing to add
-#             · 6 jq missing · 7 refused by a guard
+#             · 6 jq missing or too old · 7 refused by a guard · 8 PR head moved
 
 set -euo pipefail
 
 MARKER='🤖 **AI generated**'
 CHAT='🤖💬'
+PREFIX='^(ai|ии|фш|bb)[:;жЖ^%]'
 GH_DOCS="https://cli.github.com/"
 JQ_DOCS="https://jqlang.github.io/jq/download/"
 err() { printf '%s\n' "$*" >&2; }
@@ -81,6 +92,9 @@ command -v jq >/dev/null 2>&1 || {
   err "Install it: $JQ_DOCS"
   exit 6
 }
+case "$(jq --version 2>/dev/null)" in
+  jq-1.[0-5]|jq-1.[0-5][!0-9]*) die 6 "jq 1.6 or newer is required, found $(jq --version). Update it: $JQ_DOCS" ;;
+esac
 
 tmp="$(mktemp -d)"
 pidfile=""
@@ -119,7 +133,15 @@ gh_call() {
   return 1
 }
 
-gh_call "$tmp/url" pr view "$pr" --json url --jq .url || exit 1
+if ! gh_call "$tmp/url" pr view "$pr" --json url --jq .url 2>"$tmp/start.err"; then
+  cat "$tmp/start.err" >&2
+  # watch always answers with one line, even when it cannot start.
+  if [ "$cmd" = watch ]; then
+    if [ -f "$tmp/auth" ]; then printf 'AUTH %s\n' "$(tail -n 1 "$tmp/start.err")"
+    else printf 'ERROR %s\n' "$(tail -n 1 "$tmp/start.err")"; fi
+  fi
+  exit 1
+fi
 url="$(cat "$tmp/url")"
 rest="${url#*://}"; host="${rest%%/*}"; rest="${rest#*/}"
 owner="${rest%%/*}"; rest="${rest#*/}"; repo="${rest%%/*}"; num="${url##*/}"
@@ -129,7 +151,7 @@ STATE_QUERY='query($owner: String!, $repo: String!, $num: Int!) {
   viewer { login }
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $num) {
-      id url
+      id url headRefOid
       viewerLatestReview { id state url }
       reviews(states: PENDING, first: 10) { nodes { id author { login } comments { totalCount } } }
       reviewThreads(last: 100) {
@@ -172,21 +194,24 @@ def lead: sub("^\\s+"; "");
 | ([$p.reviews.nodes[] | select(.author.login == $me)] | first) as $rev
 | { url: $p.url,
     pr_id: $p.id,
+    head: $p.headRefOid,
     review: ($rev.id // null),
     latest: $p.viewerLatestReview,
     threads: [ $p.reviewThreads.nodes[]
       | (.comments.nodes | sort_by(.createdAt)) as $cs
       | select(any($cs[]; .state == "PENDING"))
-      | (($cs[0].state == "PENDING") and ($cs[0].body | lead | startswith($marker))) as $ai_root
+      | [ $cs[] | if .state != "PENDING" then "published"
+                  elif (.body | lead | startswith($marker)) then "ai"
+                  elif (.body | lead | startswith($chat)) then "bot"
+                  elif (.body | lead | test($prefix; "i")) then "cmd"
+                  else "plain" end ] as $base
       | { id, path, line: (.line // .originalLine), outdated: .isOutdated,
           file_level: (.subjectType == "FILE"),
           comments: [ range(0; $cs | length) as $i | $cs[$i]
             | { id,
-                kind: (if .state != "PENDING" then "published"
-                       elif (.body | lead | startswith($marker)) then "ai"
-                       elif (.body | lead | startswith($chat)) then "bot"
-                       elif (.body | lead | test("^(ai|ии|фш|bb)[:;жЖ^%]"; "i")) then "cmd"
-                       elif $ai_root and $i > 0 then "cmd"
+                kind: (if $base[$i] != "plain" then $base[$i]
+                       elif $i > 0 and ($base[0] == "ai" or $base[0] == "cmd"
+                                        or any($base[0:$i][]; . == "bot")) then "cmd"
                        else "own" end),
                 db_id: .fullDatabaseId, url, author: .author.login,
                 created: .createdAt, updated: .updatedAt, body } ] }
@@ -211,7 +236,7 @@ fetch_state() {
   local raw
   raw="$(gql "$STATE_QUERY" "$(jq -n --arg o "$owner" --arg r "$repo" --argjson n "$num" \
     '{owner: $o, repo: $r, num: $n}')")" || return 1
-  printf '%s' "$raw" | jq --arg marker "$MARKER" --arg chat "$CHAT" "$NORMALIZE"
+  printf '%s' "$raw" | jq --arg marker "$MARKER" --arg chat "$CHAT" --arg prefix "$PREFIX" "$NORMALIZE"
 }
 
 read_body() {
@@ -223,44 +248,45 @@ read_body() {
 
 # ------------------------------------------------------------------ add ----
 cmd_add() {
-  local batch="" dry=0 a
-  for a in "$@"; do
-    case "$a" in
+  local batch="" dry=0 want=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
       --dry-run) dry=1 ;;
-      --*)       die 4 "Unknown flag: $a" ;;
-      *) if [ -z "$batch" ]; then batch="$a"; else die 4 "Unexpected argument: $a"; fi ;;
+      --head)    want="${2:-}"; [ -n "$want" ] || die 4 "--head needs a commit sha."; shift ;;
+      --*)       die 4 "Unknown flag: $1" ;;
+      *) if [ -z "$batch" ]; then batch="$1"; else die 4 "Unexpected argument: $1"; fi ;;
     esac
+    shift
   done
   [ -n "$batch" ] || usage
   [ -f "$batch" ] || die 4 "Batch file not found: $batch"
   jq -e '(.comments | type) == "array"' "$batch" >/dev/null 2>&1 || die 4 "$batch has no \"comments\" array."
   jq -e '.comments | length > 0' "$batch" >/dev/null || die 5 "Nothing to add: the batch has no comments."
 
-  # Files of the PR, and every new-side line inside a hunk (added or context):
-  # those accept a line comment.
-  gh_call "$tmp/files" pr diff "$pr" --name-only || exit 1
-  gh_call "$tmp/diff" pr diff "$pr" || exit 1
-  awk '
-    /^diff --git / { inhunk = 0; next }
-    /^\+\+\+ /     { path = substr($0, 5); sub(/^b\//, "", path); next }
-    /^@@ /         { s = $3; sub(/^\+/, "", s); split(s, p, ","); n = p[1] + 0; inhunk = 1; next }
-    inhunk && /^-/  { next }
-    inhunk && /^\\/ { next }
-    inhunk          { print path "\t" n; n++ }
-  ' "$tmp/diff" > "$tmp/lines"
+  # The PR's files with their patches; every new-side line inside a hunk
+  # (added or context) accepts a line comment.
+  gh_call "$tmp/files.ndjson" api --hostname "$host" "repos/$owner/$repo/pulls/$num/files?per_page=100" \
+    --paginate --jq '.[] | {filename, patch}' || exit 1
 
   local plan
-  plan="$(jq -c --arg marker "$MARKER" --rawfile lines "$tmp/lines" --rawfile files "$tmp/files" '
-    def set(s): s | split("\n") | map(select(length > 0) | {(.): true}) | add // {};
+  plan="$(jq -c --arg marker "$MARKER" --slurpfile files "$tmp/files.ndjson" '
+    def newlines:
+      if .patch == null then []
+      else reduce (.patch | split("\n"))[] as $l ({n: 0, out: []};
+             if ($l | startswith("@@")) then .n = ($l | capture("\\+(?<c>[0-9]+)").c | tonumber)
+             elif $l == "" or ($l | startswith("-")) or ($l | startswith("\\")) then .
+             else .out += [.n] | .n += 1 end) | .out
+      end;
     def unmark: if startswith($marker) then .[($marker | length):] | sub("^\\s+"; "") else . end;
-    set($lines) as $ok | set($files) as $in
+    ($files | map({key: .filename, value: (newlines | map({(tostring): true}) | add // {})}) | from_entries) as $ok
     | [ .comments[]
+        | .path as $path
         | (.line | if . == null then null else tonumber end) as $line
-        | (if $line == null then .path else "\(.path):\($line)" end) as $where
+        | (if $line == null then $path else "\($path):\($line)" end) as $where
         | (.body | unmark) as $text
-        | if $line != null and $ok["\(.path)\t\($line)"] then
+        | if $line != null and ($ok[$path] // {})[$line | tostring] then
             {to: "line", where: $where, path, line: $line, body: ($marker + "\n\n" + $text)}
-          elif $in[.path] then
+          elif $ok | has($path) then
             {to: "file", where: $where, path,
              body: ($marker + "\n\n" + (if $line == null then "" else "`\($where)`\n\n" end) + $text)}
           else
@@ -274,8 +300,15 @@ cmd_add() {
     return 0
   fi
 
-  local state review how
+  local state head review how
   state="$(fetch_state)" || exit 1
+  head="$(jq -r '.head // ""' <<<"$state")"
+  if [ -n "$want" ]; then
+    case "$head" in
+      "$want"*) ;;
+      *) die 8 "PR head moved: reviewed $want, the head is now $head. Nothing was added." ;;
+    esac
+  fi
   review="$(jq -r '.review // empty' <<<"$state")"
   if [ -n "$review" ]; then
     how="joined the existing draft"
@@ -302,8 +335,8 @@ cmd_add() {
     fi
   done < <(jq -c '.[]' <<<"$plan")
 
-  printf 'Draft: %s/files — %s; added %s (%s file-level), skipped %s, failed %s. Nothing was submitted.\n' \
-    "$url" "$how" "$added" "$files" "$skipped" "$failed"
+  printf 'Draft: %s/files — %s (review %s); added %s (%s file-level), skipped %s, failed %s. Nothing was submitted.\n' \
+    "$url" "$how" "$review" "$added" "$files" "$skipped" "$failed"
   [ "$failed" = 0 ] || exit 1
 }
 
@@ -333,6 +366,10 @@ cmd_edit() {
   case "$kind" in
     "")        die 7 "Comment $id is not in the draft; edit refused." ;;
     published) die 7 "Comment $id is already submitted; edit refused." ;;
+    # A finding or an agent reply that lost its marker would turn into the
+    # reviewer's own comment and stall its thread.
+    ai)  case "$body" in "$MARKER"*) ;; *) body="$MARKER"$'\n\n'"$body" ;; esac ;;
+    bot) case "$body" in "$CHAT"*) ;; *) body="$CHAT $body" ;; esac ;;
   esac
   gql "$EDIT" "$(jq -n --arg id "$id" --arg b "$body" '{id: $id, body: $b}')" >/dev/null || exit 1
   printf 'edited   %s (%s)\n' "$id" "$kind"
@@ -360,9 +397,10 @@ cmd_delete() {
 
 # --------------------------------------------------------------- watch ----
 cmd_watch() {
-  local interval=20 quiet=60 timeout=7200
+  local interval=20 quiet=60 timeout=7200 seen=""
   while [ $# -gt 0 ]; do
     case "$1" in
+      --review)   seen="${2:-}"; [ -n "$seen" ] || die 4 "--review needs a review id."; shift 2; continue ;;
       --interval) interval="${2:-}" ;;
       --quiet)    quiet="${2:-}" ;;
       --timeout)  timeout="${2:-}" ;;
@@ -376,11 +414,11 @@ cmd_watch() {
   # before removing it (see cleanup/scripts/cleanup.sh for the layout).
   local common
   if common="$(git rev-parse --git-common-dir 2>/dev/null)"; then
-    pidfile="$(cd "$common" && pwd -P)/code-review/pr-$num/watch.pid"
+    pidfile="$(CDPATH='' cd -P -- "$common" && pwd -P)/code-review/pr-$num/watch.pid"
     mkdir -p "${pidfile%/*}" && printf '%s\n' "$$" > "$pidfile"
   fi
 
-  local start now s review seen="" fp prev="" since=0 fails=0
+  local start now s review fp prev="" since=0 fails=0
   start="$(date +%s)"
   while :; do
     now="$(date +%s)"
@@ -404,6 +442,10 @@ cmd_watch() {
         printf 'ACTIONABLE %s\n' "$(jq '.counts.actionable' <<<"$s")"
         return 0
       fi
+      # Idle only on what a poll has just seen: never on a failed one.
+      if [ "$fp" = "[]" ] && [ $((now - start)) -ge "$timeout" ]; then
+        printf 'IDLE\n'; return 0
+      fi
     else
       if [ -f "$tmp/auth" ]; then
         printf 'AUTH %s\n' "$(tail -n 1 "$tmp/watch.err")"
@@ -414,9 +456,6 @@ cmd_watch() {
         printf 'ERROR %s\n' "$(tail -n 1 "$tmp/watch.err")"
         return 1
       fi
-    fi
-    if [ "${prev:-[]}" = "[]" ] && [ $((now - start)) -ge "$timeout" ]; then
-      printf 'IDLE\n'; return 0
     fi
     sleep "$interval"
   done

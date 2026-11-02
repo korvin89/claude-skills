@@ -21,23 +21,26 @@
 #          default branch when there is no origin), uncommitted changes and
 #          untracked files.
 #
-# <scratch> is <git-common-dir>/code-review/pr-<N>, or …/local without a PR:
-# the one place for everything a review leaves behind; ../../cleanup/scripts/
-# cleanup.sh documents its layout and removes it. Every run first removes the
-# scratch of other merged or closed PRs that passes cleanup's checks.
+# <scratch> is <git-common-dir>/code-review/pr-<N>, or local-<id> (one per
+# checkout) without a PR: the one place for everything a review leaves behind.
+# Its layout and its removal live in ../../cleanup/scripts/cleanup.sh. This
+# script records the PR's URL in it (pr.url), never moves a head/ that holds
+# local changes, and only lists other reviews' scratch in a note — it removes
+# nothing.
 #
 # Output is plain text; every section starts with "### ":
 #   ### MODE: pr|local
 #   ### TARGET: <human description>
 #   ### SCRATCH: <dir>                            (created on demand in local mode)
 #   ### WORKTREE: <path> (<sha>)                  (pr mode, when the head is checked out)
-#   ### NOTE: …                                   (warnings, optional)
+#   ### NOTE: …                                   (warnings and the other reviews' scratch, optional)
 #   ### PR TITLE / ### PR BODY / ### EXISTING COMMENTS   (pr mode only)
 #   ### CHANGED FILES
 #   ### DIFF
 #   ### UNTRACKED FILES                           (local mode, when present)
 #
-# Exit codes: 0 ok · 2 not a git repo · 3 gh missing · 4 bad argument · 5 nothing to review
+# Exit codes: 0 ok · 1 gh failed (PR not found, auth) · 2 not a git repo · 3 gh missing
+#             · 4 bad argument, or the PR's scratch belongs to another PR · 5 nothing to review
 
 set -euo pipefail
 
@@ -65,14 +68,16 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-scratch_root="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)/code-review"
-
-# Sweep the scratch of merged or closed PRs; its lines become notes below.
+scratch_root="$(CDPATH='' cd -P -- "$(git rev-parse --git-common-dir)" && pwd -P)/code-review"
 cleanup="$(dirname "$0")/../../cleanup/scripts/cleanup.sh"
-swept=""
-keep="${pr##*/pull/}"; keep="${keep%%[!0-9]*}"
-[ -f "$cleanup" ] && swept="$(bash "$cleanup" --stale ${keep:+--keep "$keep"} 2>/dev/null || true)"
-notes() { [ -z "$swept" ] || printf '%s\n' "$swept" | sed 's/^/### NOTE: scratch: /'; }
+
+# others <key> — a note naming the other reviews' scratch, if there is any.
+others() {
+  local list=""
+  [ -f "$cleanup" ] && list="$(bash "$cleanup" list --except "$1" 2>/dev/null \
+    | awk -F'\t' '$1 ~ /^(pr-|local-)/ { printf "%s%s (%s, %s)", sep, $1, $2, $3; sep = ", " }')"
+  [ -z "$list" ] || printf '### NOTE: scratch of other reviews: %s — /korvin89:cleanup <pr> removes one\n' "$list"
+}
 
 # Base ref for local comparisons. Prefer origin/<default>: a stale local main
 # would leak upstream commits into the diff.
@@ -105,13 +110,23 @@ pr_worktree() {
     || { err "git fetch $remote pull/$num/head failed"; return 1; }
   sha="$(git rev-parse FETCH_HEAD)"
   wt="$scratch_root/pr-$num/head"
-  git worktree prune
   if [ -e "$wt/.git" ]; then
-    git -C "$wt" checkout --quiet --force --detach "$sha" 2>/dev/null \
+    local dirty old
+    dirty="$(git -C "$wt" status --porcelain 2>/dev/null)" \
+      || { err "git cannot read $wt (was the repository moved?); /korvin89:cleanup $num and run again"; return 1; }
+    if [ -n "$dirty" ]; then
+      # Never throw away changes someone made in head/: keep it where it is.
+      old="$(git -C "$wt" rev-parse HEAD)"
+      printf '%s\t%s\t%s\n' "$wt" "$old" "head/ has local changes and was not moved to the PR head $sha; its files may be outdated"
+      return 0
+    fi
+    git -C "$wt" checkout --quiet --detach "$sha" 2>/dev/null \
       || { err "could not move $wt to $sha"; return 1; }
   else
     mkdir -p "$scratch_root/pr-$num"
-    git worktree add --quiet --detach "$wt" "$sha" 2>/dev/null \
+    # --force only lets the path be reused when its folder was deleted by hand
+    # while git still lists it; the checkout is detached, no branch is taken.
+    git worktree add --quiet --force --detach "$wt" "$sha" 2>/dev/null \
       || { err "git worktree add $wt failed"; return 1; }
   fi
   printf '%s\t%s\n' "$wt" "$sha"
@@ -130,15 +145,24 @@ if [ -n "$pr" ]; then
   rest="${url#*://}"; host="${rest%%/*}"; rest="${rest#*/}"
   owner="${rest%%/*}"; rest="${rest#*/}"; repo="${rest%%/*}"; num="${url##*/}"
   printf '%s\n' "${head#*$'\n'}"
-  mkdir -p "$scratch_root/pr-$num"
-  printf '### SCRATCH: %s\n' "$scratch_root/pr-$num"
-  notes
+
+  # The scratch is keyed by number; pr.url says which repository's PR it is.
+  scratch="$scratch_root/pr-$num"
+  if [ -f "$scratch/pr.url" ] \
+     && [ "$(tr '[:upper:]' '[:lower:]' < "$scratch/pr.url")" != "$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')" ]; then
+    die 4 "The scratch $scratch belongs to $(cat "$scratch/pr.url"). Remove it with /korvin89:cleanup $(cat "$scratch/pr.url") and run again."
+  fi
+  mkdir -p "$scratch"
+  printf '%s\n' "$url" > "$scratch/pr.url"
+  printf '### SCRATCH: %s\n' "$scratch"
+  others "pr-$num"
 
   reason="$(mktemp)"
   trap 'rm -f "$reason"' EXIT
   if wt="$(pr_worktree "$owner" "$repo" "$num" 2>"$reason")"; then
-    printf '### WORKTREE: %s (%s) — the PR head; read files here, not in the current checkout\n' \
-      "${wt%%$'\t'*}" "${wt#*$'\t'}"
+    IFS=$'\t' read -r wt_path wt_sha wt_note <<<"$wt"
+    printf '### WORKTREE: %s (%s) — the PR head; read files here, not in the current checkout\n' "$wt_path" "$wt_sha"
+    [ -z "$wt_note" ] || printf '### NOTE: %s\n' "$wt_note"
   else
     printf '### NOTE: the PR head is not checked out (%s). Review from the diff below: files in the current checkout may not be the PR version.\n' \
       "$(tail -n 1 "$reason")"
@@ -192,16 +216,18 @@ fi
 files="$(git -c core.quotepath=false diff --name-only "$from")"
 # New, never-added files do not appear in `git diff`; list them so the reviewer
 # can read them directly (the index is left untouched).
-untracked="$(git ls-files --others --exclude-standard)"
+untracked="$(git -c core.quotepath=false ls-files --others --exclude-standard --full-name -- :/)"
 [ -n "$files$untracked" ] \
   || die 5 "Nothing to review: $cur has no commits beyond ${base:-HEAD} and the working tree is clean. Pass a PR reference to review a pull request."
 
 target="$cur"
 [ -n "$base" ] && target="$target: $ahead commit(s) since $base (merge-base $(git rev-parse --short "$from"))"
 [ -n "$(git status --porcelain)" ] && target="$target + uncommitted changes"
-printf '### MODE: local\n### TARGET: %s\n### SCRATCH: %s\n' "$target" "$scratch_root/local"
+# One local scratch per checkout (cleanup.sh derives the same key).
+key="local-$(git rev-parse --show-toplevel | cksum | cut -d' ' -f1)"
+printf '### MODE: local\n### TARGET: %s\n### SCRATCH: %s\n' "$target" "$scratch_root/$key"
 [ -z "$note" ] || printf '%s\n' "$note"
-notes
+others "$key"
 printf '\n### CHANGED FILES\n%s\n\n### DIFF\n' "$files"
 git diff "$from"
 if [ -n "$untracked" ]; then

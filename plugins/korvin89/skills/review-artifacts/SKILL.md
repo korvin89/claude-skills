@@ -41,7 +41,7 @@ failure you cannot fix from the error.
 All files go into `<scratch>/artifacts/<slug>/`. `<scratch>` is the
 `### SCRATCH:` dir when called from `code-review`; invoked by hand, it is
 printed by `bash "${CLAUDE_PLUGIN_ROOT}/skills/cleanup/scripts/cleanup.sh" path
-<pr-number | local>`. Never write to `/tmp`; `/korvin89:cleanup` removes the
+'<pr-url | local>'` (the PR URL, so the scratch records whose it is). Never write to `/tmp`; `/korvin89:cleanup` removes the
 scratch later.
 
 Never switch the reviewer's checkout: one `git worktree add` per ref under

@@ -34,7 +34,10 @@ Files bundled with this plugin:
   and configs on an artifact page, for a thread that asks for artifacts
   (Step 8). Read only then.
 
-`<pr>` below is the PR reference from `$ARGUMENTS`. `ai:` below stands for any
+`<pr>` below is the PR URL from `### TARGET:` — always the URL, never a bare
+number, which would resolve against whatever repository the current directory
+is in. `<scratch>` is the `### SCRATCH:` dir, `<head-sha>` the commit in
+`### WORKTREE:`. `ai:` below stands for any
 command prefix `draft.sh` accepts: `ai:`, `ии:`, and both typed in the other
 keyboard layout (`фш:`, `bb:`, `фшЖ`, `bb^`); `draft.sh state` marks all of
 them `cmd`.
@@ -74,35 +77,44 @@ behave as `--quick`.
 
 ## Step 1 — Collect
 
+The invocation's arguments are `$ARGUMENTS`. Pass each of them to the
+collector in single quotes — an unquoted `#123` would start a shell comment and
+silently turn the run into a local review:
+
 ```
-bash "${CLAUDE_SKILL_DIR}/scripts/collect-diff.sh" $ARGUMENTS
+bash "${CLAUDE_SKILL_DIR}/scripts/collect-diff.sh" '<argument>' …
 ```
 
-Pass `$ARGUMENTS` through verbatim: the script skips the skill's own flags,
-detects the mode (`### MODE:` header) and, in PR mode, prints the title, body,
-and every comment already on the PR. Its exit codes:
+The script skips the skill's own flags, detects the mode (`### MODE:` header)
+and, in PR mode, prints the title, body, and every comment already on the PR.
+Its exit codes:
 
 - `3` — `gh` is missing. Stop the workflow and tell the reviewer exactly this,
   nothing more:
   > GitHub CLI (`gh`) is required to review a pull request but was not found.
   > Install it: https://cli.github.com/
-- `4` / `5` — bad argument / nothing to review. Relay the script's message in
-  Russian and stop.
+- `1` / `2` / `4` / `5` — `gh` failed (no such PR, not logged in) / not a git
+  repository / bad argument, or the PR's scratch belongs to another PR /
+  nothing to review. Relay the script's message in Russian and stop.
 
 `### SCRATCH:` is the one place for this review's files — the batch, artifact
 pages' screenshots and worktrees; write nothing for the review to `/tmp`. In PR
 mode, `### WORKTREE:` is a checkout of the PR head made for this review.
 For the whole run — passes, second pass, draft loop — read and grep the PR's
-files there, never in the current checkout: it may be on another branch. When a
-`### NOTE:` says the head could not be checked out, review from the diff alone
-and say so in one Russian line.
+files there, never in the current checkout: it may be on another branch.
+
+`### NOTE:` lines: the head could not be checked out → review from the diff
+alone and say so in one Russian line; `head/` was kept because it has local
+changes → its files may be older than the PR, say so; the scratch of other
+reviews → mention it once, in Step 2's message.
 
 ## Step 2 — Configuration (one prompt)
 
 Skip under `--quick` (no second pass, no focus areas).
 
 Show the reviewer, in Russian, the mode and target, the changed files (count and
-the notable ones), and the PR title or branch name. Then ask **three questions
+the notable ones), the PR title or branch name, and the other reviews' scratch
+if a note named it. Then ask **three questions
 in a single `AskUserQuestion` call**:
 
 1. **Второй проход** — `да` / `нет`, default `нет` (Step 5).
@@ -134,7 +146,9 @@ A hunk is not enough to judge a change.
   ```
   bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" state <pr>
   ```
-  A point one of their `own` comments already makes is not a new finding.
+  A point one of their `own` comments already makes is not a new finding. When
+  `state` has a `warning` (more than 100 threads), relay it in one line:
+  commands in older threads will not be seen.
 - **Project conventions layer.** A repo may add its own rules at
   `.claude/skills/code-review-conventions/SKILL.md`; the rubric is the base,
   the layer adds to and overrides it, and wins on any direct conflict. A
@@ -156,8 +170,10 @@ An independent opinion, unanchored by pass 1. Spawn one sub-agent with the
 
 - the absolute paths of `rubric.md` and of the conventions layer (if any) — it
   reads them itself;
-- the exact collector command from Step 1 — it runs it itself and reads the
-  changed files in full — and, in PR mode, the worktree path to read them in;
+- what to read: in PR mode the worktree path and `gh pr diff <pr>` for the
+  diff — it must not run the collector, which would move the worktree under
+  you; in local mode the exact collector command from Step 1. Either way it
+  reads the changed files in full;
 - the intent statement and the focus areas (as elevated priorities to
   scrutinize, not as findings to confirm);
 - the return format: the rubric's finding format, numbered, in Russian.
@@ -191,9 +207,9 @@ No approval step: the draft is visible only to the reviewer until they submit
 it, and curation happens there.
 
 1. **Re-read the draft** (`draft.sh state <pr>`): the reviewer may have added
-   comments while you reviewed. Leave out a finding that one of their `own`
-   comments already makes (same place, same point) and name its number in the
-   report.
+   comments while you reviewed, and an earlier run may have left findings
+   there. Leave out a finding that an `own` comment or an `ai` finding already
+   makes (same place, same point) and name its number in the report.
 2. **Render** each remaining finding in the comment language, style per the
    invariants: marker, severity tag, problem, why, fix; confidence and `✓✓`
    removed. One finding is one thread.
@@ -204,15 +220,23 @@ it, and curation happens there.
    ```
 
    ```
-   bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" add <pr> <scratch>/batch.json
+   bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" add <pr> <scratch>/batch.json --head <head-sha>
    ```
 
    `line` is the new-side line. A line outside the diff becomes a file-level
    thread; a finding in a file outside the diff is skipped — give such findings
-   to the reviewer in full, for the summary they write at submit.
+   to the reviewer in full, for the summary they write at submit. Leave out
+   `--head` only when there is no `### WORKTREE:`. Exit codes:
+   - `8` — the PR head moved since Step 1 and nothing was added. Tell the
+     reviewer, run Step 1 again (the worktree moves to the new head), check
+     every finding's line and text against the new code, then add.
+   - `1` after some `added` lines — part of the batch went in. Run `state` and
+     add only the findings that are not there; never re-run the whole batch.
+   - `5` — nothing to add.
 4. **Report** in Russian: a new draft or the reviewer's existing one, what went
-   in, what was left out and why, the link from the script's last line. On the
-   first run in a session, add the protocol:
+   in, what was left out and why, the link from the script's last line. Keep
+   the review id from that line, `(review …)`, for the watcher. On the first
+   run in a session, add the protocol:
 
    > Находки в твоём драфте, Submit — за тобой. Мне можно писать прямо там:
    > ответ в 🤖-треде или комментарий, начинающийся с `ai:` или `ии:` (на любой
@@ -229,14 +253,18 @@ with `ai:` from their own comments.
 **Arm the watcher** with the Bash tool and `run_in_background: true`:
 
 ```
-bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" watch <pr>
+bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" watch <pr> --review <review-id>
 ```
+
+`<review-id>` is the draft's id: the `(review …)` of the `add` line, or the
+`review` of the latest `state`; omit `--review` when there is no draft yet. It
+lets the watcher report a submit that happened while no watcher ran.
 
 It polls the draft and exits with one line; you are woken then. Do not check
 on it in between — no reading its output, no extra `state` calls: the polling
 is its job. One watcher per PR: arm the next one only after the previous one
-has exited. The reviewer
-may write in the session meanwhile; answer as usual, the watcher keeps running.
+has exited. The reviewer may write in the session meanwhile; answer as usual,
+the watcher keeps running.
 
 | Watcher line | Then |
 |---|---|
@@ -246,9 +274,12 @@ may write in the session meanwhile; answer as usual, the watcher keeps running.
 | `AUTH …` | one line: `gh` is not logged in, `gh auth login` then «синк»; the loop ends |
 | `IDLE` | one line: two hours without commands, «синк» resumes; the loop ends |
 | `ERROR …` | relay it in one line, «синк» resumes; the loop ends |
+| exit with no line | a usage error: relay its stderr in one line; the loop ends |
 
-**A pass.** Run `draft.sh state <pr>` and take every thread with
-`actionable: true`. For each:
+**A pass.** Run `draft.sh state <pr>`. When its `review` is null the draft is
+gone: `latest` (state not `PENDING`) means it was submitted, its `url` is the
+review — handle the pass as `SUBMITTED`, otherwise as `DISCARDED`. Else take
+every thread with `actionable: true`. For each:
 
 1. **Read** the `cmd` comments after your last `🤖💬` reply, and the target:
    the thread's root — an `ai` finding or the reviewer's `own` comment — or,
@@ -262,7 +293,9 @@ may write in the session meanwhile; answer as usual, the watcher keeps running.
    touches what you may not; say so in a reply instead.
 3. **Close** the thread one of two ways:
    - done → delete the `cmd` comments you read and your `🤖💬` replies in this
-     thread (`draft.sh delete <pr> <ids…>`), so only the target remains;
+     thread (`draft.sh delete <pr> <ids…>`), so only the target remains — a
+     `cmd` root you have just rewritten into a finding is the target and
+     stays;
    - you need an answer, or you are answering a question → reply
      (`draft.sh reply <pr> <thread-id>`, body on stdin) and leave the thread
      open.
@@ -272,7 +305,8 @@ may write in the session meanwhile; answer as usual, the watcher keeps running.
    next pass.
 
 Then one Russian line per thread in the session (`path:line` — what was done),
-and arm the watcher again.
+and arm the watcher again — unless one is still running, as after a «синк»
+pass.
 
 Commands come in Russian or English, as free text; the table gives both forms.
 The language of a command does not change the comment language.
@@ -303,19 +337,23 @@ A reference that matches nothing, or more than one thread, gets a reply asking
 which.
 
 **In the session** the reviewer can also say: «синк» · `sync` — run a pass
-now; a request across the whole draft («убери все nit» · `drop all nits`,
+now (a running watcher keeps running; with none running, arm one after the
+pass); a request across the whole draft («убери все nit» · `drop all nits`,
 «переведи всё на en» · `translate all to en`) — apply it to every `ai` finding
-and report; «стоп» · `stop` — stop the watcher, clean up, and end the loop.
+and report; «стоп» · `stop` — stop the watcher (the task-stop tool on its
+background task, or `kill "$(cat <scratch>/watch.pid)"`), clean up, and end
+the loop.
 
 **Cleanup.** When a PR run ends for good — `SUBMITTED`, `DISCARDED`, «стоп», or
 the end of a `--quick` run — remove its scratch:
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/skills/cleanup/scripts/cleanup.sh" <pr>
+bash "${CLAUDE_PLUGIN_ROOT}/skills/cleanup/scripts/cleanup.sh" '<pr>'
 ```
 
 Exit 10 means its checks found something (uncommitted work in a worktree, a
 scratch that may be another PR's, a watcher still running) and nothing was
 removed: relay the warnings in one Russian line and suggest
-`/korvin89:cleanup <pr>`. Never add `--yes` yourself. After `IDLE`, `AUTH` or
+`/korvin89:cleanup <pr>`. Never confirm on the reviewer's behalf: no
+`--yes=…` from this skill. After `IDLE`, `AUTH` or
 `ERROR` keep the scratch: «синк» resumes the loop.
