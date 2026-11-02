@@ -45,7 +45,12 @@
 #   IDLE              --timeout seconds passed (default 7200) and no command is
 #                     waiting; a command found after a long laptop sleep still
 #                     gets its ACTIONABLE
+#   AUTH <message>    gh is not authenticated (HTTP 401 or no login): exit 1 at
+#                     once, as every later poll would fail alike
 # Five failed polls in a row print "ERROR <message>" and exit 1.
+#
+# Every GitHub call is cut after DRAFT_CALL_DEADLINE seconds (default 30), so a
+# hung network call fails like any other instead of stalling the watcher.
 #
 # Requires: gh (authenticated) and jq.
 # Exit codes: 0 ok · 1 GitHub error · 3 gh missing · 4 bad usage · 5 nothing to add
@@ -78,8 +83,42 @@ command -v jq >/dev/null 2>&1 || {
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+CALL_DEADLINE="${DRAFT_CALL_DEADLINE:-30}"
 
-url="$(gh pr view "$pr" --json url --jq .url)"
+# deadline <cmd…> — run cmd, TERM it after $CALL_DEADLINE seconds; 124 on timeout.
+deadline() {
+  local pid dog rc=0
+  "$@" & pid=$!
+  ( sleep "$CALL_DEADLINE" && kill -TERM "$pid" 2>/dev/null ) >/dev/null 2>&1 & dog=$!
+  wait "$pid" || rc=$?
+  if kill -0 "$dog" 2>/dev/null; then
+    pkill -P "$dog" 2>/dev/null || true
+    kill "$dog" 2>/dev/null || true
+  elif [ "$rc" -ne 0 ]; then
+    rc=124
+  fi
+  wait "$dog" 2>/dev/null || true
+  return "$rc"
+}
+
+# gh_call <out-file> <gh args…> — gh under the deadline, stderr kept in
+# $tmp/gh.err; a failure is reported on stderr, an auth failure also leaves
+# $tmp/auth behind.
+gh_call() {
+  local out="$1" rc=0; shift
+  deadline gh "$@" > "$out" 2> "$tmp/gh.err" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  if [ "$rc" -eq 124 ]; then
+    err "GitHub API error: no answer in ${CALL_DEADLINE}s"
+  else
+    grep -q -e 'HTTP 401' -e 'gh auth login' "$tmp/gh.err" && : > "$tmp/auth"
+    err "GitHub API error: $(tail -n 1 "$tmp/gh.err")"
+  fi
+  return 1
+}
+
+gh_call "$tmp/url" pr view "$pr" --json url --jq .url || exit 1
+url="$(cat "$tmp/url")"
 rest="${url#*://}"; host="${rest%%/*}"; rest="${rest#*/}"
 owner="${rest%%/*}"; rest="${rest#*/}"; repo="${rest%%/*}"; num="${url##*/}"
 
@@ -161,13 +200,9 @@ def lead: sub("^\\s+"; "");
 
 # gql <query> <variables-json> — print the response; fail on any GraphQL error.
 gql() {
-  local resp
-  resp="$(jq -n --arg q "$1" --argjson v "$2" '{query: $q, variables: $v}' \
-    | gh api graphql --hostname "$host" --method POST --input - 2>"$tmp/gh.err")" || {
-    err "GitHub API error: $(tail -n 1 "$tmp/gh.err")"
-    return 1
-  }
-  printf '%s\n' "$resp"
+  jq -n --arg q "$1" --argjson v "$2" '{query: $q, variables: $v}' > "$tmp/req.json"
+  gh_call "$tmp/resp.json" api graphql --hostname "$host" --method POST --input "$tmp/req.json" || return 1
+  cat "$tmp/resp.json"
 }
 
 fetch_state() {
@@ -201,15 +236,16 @@ cmd_add() {
 
   # Files of the PR, and every new-side line inside a hunk (added or context):
   # those accept a line comment.
-  gh pr diff "$pr" --name-only > "$tmp/files"
-  gh pr diff "$pr" | awk '
+  gh_call "$tmp/files" pr diff "$pr" --name-only || exit 1
+  gh_call "$tmp/diff" pr diff "$pr" || exit 1
+  awk '
     /^diff --git / { inhunk = 0; next }
     /^\+\+\+ /     { path = substr($0, 5); sub(/^b\//, "", path); next }
     /^@@ /         { s = $3; sub(/^\+/, "", s); split(s, p, ","); n = p[1] + 0; inhunk = 1; next }
     inhunk && /^-/  { next }
     inhunk && /^\\/ { next }
     inhunk          { print path "\t" n; n++ }
-  ' > "$tmp/lines"
+  ' "$tmp/diff" > "$tmp/lines"
 
   local plan
   plan="$(jq -c --arg marker "$MARKER" --rawfile lines "$tmp/lines" --rawfile files "$tmp/files" '
@@ -359,6 +395,10 @@ cmd_watch() {
         return 0
       fi
     else
+      if [ -f "$tmp/auth" ]; then
+        printf 'AUTH %s\n' "$(tail -n 1 "$tmp/watch.err")"
+        return 1
+      fi
       fails=$((fails + 1))
       if [ "$fails" -ge 5 ]; then
         printf 'ERROR %s\n' "$(tail -n 1 "$tmp/watch.err")"
