@@ -1,7 +1,7 @@
 {
   "name": "korvin89",
   "version": "0.5.0",
-  "description": "korvin89's personal skill namespace for Claude Code. Ships an interactive, curation-first code-review workflow and a review-artifacts page builder; more skills will live here over time.",
+  "description": "korvin89's personal skill namespace for Claude Code. Ships an interactive, curation-first code-review workflow that works inside your GitHub draft review, and a review-artifacts page builder; more skills will live here over time.",
   "author": {
     "name": "Evgenii Alaev",
     "email": "alaev89@yandex.ru"

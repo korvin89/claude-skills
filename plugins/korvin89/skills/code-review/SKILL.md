@@ -4,53 +4,65 @@ description: >-
   Curation-first code review of a pull request, the current branch, or the
   working tree: collects the diff, reads full file context, reviews in ordered
   passes with severity and confidence, optionally adds an independent second
-  pass, then lets the reviewer pick which findings get posted. Use when asked
-  to review a PR, review changes or a diff, or check code before merge.
-argument-hint: "[pr-number | pr-url] [--post] [--quick] [--branch]"
+  pass. On a PR the findings go into the reviewer's GitHub draft review, where
+  the reviewer curates them with `ai:` comments and submits it themselves. Use
+  when asked to review a PR, review changes or a diff, or check code before
+  merge.
+argument-hint: "[pr-number | pr-url] [--quick] [--branch]"
 allowed-tools: Read, Grep, Glob, Bash, Agent, AskUserQuestion, Artifact
 ---
 
 # Code review
 
 You run a **workflow**: collect the diff, build real context around it, review
-it against the rubric, then walk the reviewer through a short curation loop
-before anything is posted. Every finding is located (`file:line`) and concrete.
+it against the rubric. On a PR the findings then go into the reviewer's draft
+review on GitHub, and you keep editing that draft on the reviewer's `ai:`
+comments until they submit it. Every finding is located (`file:line`) and
+concrete.
 
 Files bundled with this plugin:
 
 - `${CLAUDE_SKILL_DIR}/references/rubric.md` — passes, frontend layer,
   severity + confidence, the finding format. Read before pass 1.
 - `${CLAUDE_SKILL_DIR}/scripts/collect-diff.sh` — collects the diff (Step 1).
-- `${CLAUDE_SKILL_DIR}/scripts/post-review.sh` — posts the batch (Step 9).
+- `${CLAUDE_SKILL_DIR}/scripts/draft.sh` — reads and edits the reviewer's draft
+  review (Steps 3, 7, 8). Its header documents the subcommands, the comment
+  kinds and the guards.
 - `${CLAUDE_PLUGIN_ROOT}/skills/review-artifacts/SKILL.md` — screenshot pairs
-  and configs on an artifact page for a finding marked `+артефакты` (Step 7).
-  Read only then.
+  and configs on an artifact page, for a thread that asks for artifacts
+  (Step 8). Read only then.
+
+`<pr>` below is the PR reference from `$ARGUMENTS`.
 
 ## Invariants
 
-- **Working language is Russian.** Everything said to the reviewer in the
-  conversation — dump, questions, confirmations — is Russian.
-- **Comment language** is the language of the *posted* text only. Resolved at
-  Stop 1.
-- **Style, everywhere** — the dump, the questions, the posted comments: dry and
-  businesslike, no slang, only the matter at hand. The code under review is
-  neither praised nor graded; a finding states the problem, why it matters, and
-  the fix.
+- **Working language is Russian.** Everything said to the reviewer — in the
+  conversation and in your `🤖💬` replies in the draft — is Russian.
+- **Comment language** is the language of the findings in the draft only.
+  Resolved in Step 2.
+- **Style, everywhere** — the dump, the questions, the findings, the replies:
+  dry and businesslike, no slang, only the matter at hand. The code under review
+  is neither praised nor graded; a finding states the problem, why it matters,
+  and the fix.
 - **Severity tags** are `🔴 blocker` · `🟠 should-fix` · `🔵 nit` · `❓ question`:
-  emoji, then the English term, unchanged in the dump and in posted comments,
+  emoji, then the English term, unchanged in the dump and in the draft,
   whatever the comment language.
-- **`🤖 **AI generated**`** opens every posted comment. `post-review.sh`
-  prepends it when missing; write it anyway. There is no top-level legend.
-- **Posting** happens only with `--post`, only in PR mode, only after the
-  reviewer confirms the final batch at Stop 3. Otherwise the batch is printed.
+- **Draft only.** You write into the reviewer's pending review and never submit
+  it; the reviewer submits in GitHub and writes the summary there. A draft they
+  already started is joined, not replaced. Submitted comments are never touched.
+- **Markers.** `🤖 **AI generated**` opens every finding in the draft
+  (`draft.sh add` prepends it when missing; write it anyway). `🤖💬` opens every
+  reply you write in a thread; replies are temporary and go once the thread is
+  resolved.
+- **The reviewer's own comments** (`own` in `draft.sh state`) are their review:
+  you never delete one and rewrite one only on an `ai:` command in its thread.
 
 ## Arguments (`$ARGUMENTS`)
 
 | Argument | Effect |
 |---|---|
-| `<number>` / `#<number>` / `<pr-url>` | PR mode (needs `gh`). Omitted → working tree if dirty, else current branch. |
-| `--post` | Post the confirmed batch to the PR (Step 9). Ignored under `--quick`. |
-| `--quick` | Single pass, dump the findings, stop: no prompts, no second pass, no posting. |
+| `<number>` / `#<number>` / `<pr-url>` | PR mode (needs `gh`): findings go into the reviewer's draft (Steps 7–8). Omitted → working tree if dirty, else current branch. |
+| `--quick` | Single pass, dump the findings, stop: no prompts, no second pass, no draft. |
 | `--branch` | Force branch mode even when the working tree is dirty. |
 
 When you cannot ask the reviewer (headless run), say so in one Russian line and
@@ -73,7 +85,7 @@ and every comment already on the PR. Its exit codes:
 - `4` / `5` — bad argument / nothing to review. Relay the script's message in
   Russian and stop.
 
-## Step 2 — Stop 1: configuration (one prompt)
+## Step 2 — Configuration (one prompt)
 
 Skip under `--quick` (no second pass, no focus areas).
 
@@ -104,10 +116,16 @@ A hunk is not enough to judge a change.
   and `git log` locally. It anchors pass 1 and briefs the second pass.
 - **`### EXISTING COMMENTS`** is what is already raised on the PR. A point made
   there is not a new finding; mention it only when you add something to it.
+- **The reviewer's draft** (PR mode). The reviewer may be reviewing in
+  parallel, and their draft comments are context too:
+  ```
+  bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" state <pr>
+  ```
+  A point one of their `own` comments already makes is not a new finding.
 - **Project conventions layer.** A repo may add its own rules at
   `.claude/skills/code-review-conventions/SKILL.md`; the rubric is the base,
   the layer adds to and overrides it, and wins on any direct conflict. A
-  `comment-language: <value>` line in it sets the repo's default for Stop 1.
+  `comment-language: <value>` line in it sets the repo's default for Step 2.
   ```!
   cat .claude/skills/code-review-conventions/SKILL.md 2>/dev/null || echo "(no project conventions layer)"
   ```
@@ -118,7 +136,7 @@ Read `${CLAUDE_SKILL_DIR}/references/rubric.md` and work its passes in order
 over the context from Step 3, focus areas at elevated priority. Hold the
 findings until Step 6.
 
-## Step 5 — Second pass (only if chosen at Stop 1)
+## Step 5 — Second pass (only if chosen in Step 2)
 
 An independent opinion, unanchored by pass 1. Spawn one sub-agent with the
 `Agent` tool. Its brief contains:
@@ -151,55 +169,106 @@ and the fix. Uncertainty is expressed through `question` and the confidence
 axis, not through softened wording. When a real review found nothing worth
 raising, say so in one line.
 
-Under `--quick`, stop here.
+Under `--quick`, or outside PR mode, stop here.
 
-## Step 7 — Stop 2: curation
+## Step 7 — Into the draft (PR mode)
 
-Ask in Russian for a free-text reply, for example:
+No approval step: the draft is visible only to the reviewer until they submit
+it, and curation happens there.
 
-> Ответь, какие пункты идут в финальный батч: номера через запятую (или «все»).
-> К любому пункту можешь добавить детали — например «4: добавь, что это ломает и
-> мобилку». «4: +артефакты» — соберу скриншоты main/PR и конфиги на отдельную
-> страницу и подошью ссылку. Что не выбрано — не постим.
+1. **Re-read the draft** (`draft.sh state <pr>`): the reviewer may have added
+   comments while you reviewed. Leave out a finding that one of their `own`
+   comments already makes (same place, same point) and name its number in the
+   report.
+2. **Render** each remaining finding in the comment language, style per the
+   invariants: marker, severity tag, problem, why, fix; confidence and `✓✓`
+   removed. One finding is one thread.
+3. **Add** them in one call:
 
-Keep only the selected numbers and apply any per-item edits. Wait for the
-answer.
+   ```json
+   { "comments": [ { "path": "src/x.ts", "line": 42, "body": "🤖 **AI generated**\n\n🔴 **blocker** — …" } ] }
+   ```
 
-**Artifacts.** For every finding marked `+артефакты`, read
-`${CLAUDE_PLUGIN_ROOT}/skills/review-artifacts/SKILL.md` and follow it with
-that finding as the subject; append its final line (`Артефакты: <link>`, in the
-comment language) to the finding. Do this before Stop 3 so the links are part
-of the final batch.
+   ```
+   bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" add <pr> /tmp/review-batch-<pr-number>.json
+   ```
 
-## Step 8 — Stop 3: final batch
+   `line` is the new-side line. A line outside the diff becomes a file-level
+   thread; a finding in a file outside the diff is skipped — give such findings
+   to the reviewer in full, for the summary they write at submit.
+4. **Report** in Russian: a new draft or the reviewer's existing one, what went
+   in, what was left out and why, the link from the script's last line. On the
+   first run in a session, add the protocol:
 
-Render the batch exactly as it would be posted:
+   > Находки в твоём драфте, Submit — за тобой. Мне можно писать прямо там:
+   > ответ в 🤖-треде или комментарий, начинающийся с `ai:` (на любой строке или
+   > под своим комментарием). Подхвачу, когда ты на минуту затихнешь, и сам
+   > уберу служебные реплики. Твои комментарии без `ai:` не трогаю.
 
-- prose in the comment language, style per the invariants;
-- severity tags per the invariants; confidence and `✓✓` removed;
-- each item opened with `🤖 **AI generated**`.
+Go on to Step 8 even when no finding went in: the reviewer can still call you
+with `ai:` from their own comments.
 
-Then ask in Russian: всё ок и постим — или ещё почитать и погрумить? Grooming
-loops back to Step 7. Proceed only on confirmation.
+## Step 8 — Draft loop
 
-## Step 9 — Post (`--post`, PR mode, confirmed)
-
-Write the batch to a JSON file and post it as **one PR review**:
-
-```json
-{
-  "body": "",
-  "unattached_heading": "<heading for findings that are not on a diff line, in the comment language>",
-  "comments": [
-    { "path": "src/x.ts", "line": 42, "body": "🤖 **AI generated**\n\n🔴 **blocker** — …" }
-  ]
-}
-```
+**Arm the watcher** with the Bash tool and `run_in_background: true`:
 
 ```
-bash "${CLAUDE_SKILL_DIR}/scripts/post-review.sh" <pr-ref> /tmp/review-batch.json
+bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" watch <pr>
 ```
 
-`line` is the new-side line. Findings on lines outside the diff are moved by
-the script into the review body with their `path:line`. Report the script's
-output (review URL, counts) to the reviewer in Russian.
+It polls the draft and exits with one line; you are woken then. One watcher
+per PR: arm the next one only after the previous one has exited. The reviewer
+may write in the session meanwhile; answer as usual, the watcher keeps running.
+
+| Watcher line | Then |
+|---|---|
+| `ACTIONABLE <n>` | run a pass (below), then arm the watcher again |
+| `SUBMITTED <url>` | one Russian line with the link; the loop ends |
+| `DISCARDED` | one line: the draft was discarded; the loop ends |
+| `IDLE` | one line: two hours without commands, «синк» resumes; the loop ends |
+| `ERROR …` | relay it in one line, «синк» resumes; the loop ends |
+
+**A pass.** Run `draft.sh state <pr>` and take every thread with
+`actionable: true`. For each:
+
+1. **Read** the `cmd` comments after your last `🤖💬` reply, and the target:
+   the thread's root — an `ai` finding or the reviewer's `own` comment — or,
+   when the root itself is a `cmd`, the line the thread sits on. Take the
+   target's body from this state: if the reviewer edited it in GitHub, their
+   edit is the base.
+2. **Do** what is asked (table below). Commands are free text; interpret them.
+   Rewritten text follows the invariants and the comment language unless the
+   command names another language. `draft.sh edit` replaces the whole body:
+   keep the marker and the tag. A guard refusal (exit 7) means the request
+   touches what you may not; say so in a reply instead.
+3. **Close** the thread one of two ways:
+   - done → delete the `cmd` comments you read and your `🤖💬` replies in this
+     thread (`draft.sh delete <pr> <ids…>`), so only the target remains;
+   - you need an answer, or you are answering a question → reply
+     (`draft.sh reply <pr> <thread-id>`, body on stdin) and leave the thread
+     open.
+
+   No thread ends a pass still actionable — the watcher would wake you again
+   for nothing. A `cmd` that arrived after your `state` call waits for the
+   next pass.
+
+Then one Russian line per thread in the session (`path:line` — what was done),
+and arm the watcher again.
+
+| In the thread | You do |
+|---|---|
+| `удали` | delete the whole thread (`ai` root only; the reviewer deletes their own comments in GitHub) |
+| `короче`, `мягче`, `переформулируй: …`, `en` | rewrite the target in place |
+| `nit`, `should-fix`, `blocker`, `question` | change the tag; rewrite the text when the tag changes what it says |
+| `предложи фикс` | append a `suggestion` block that replaces exactly the commented line; a wider fix goes into a plain code block |
+| `где ещё?` | find the same problem elsewhere in the diff and add those `path:line` to the finding |
+| `артефакты` | follow `review-artifacts` with the finding as the subject; append its `Артефакты: <link>` line |
+| `почему?`, any question | answer with a reply; the thread stays open |
+| `ок`, `оставь` after your reply | delete the `cmd` comments and your replies; the target stays as it is |
+| `ai: оформи` under the reviewer's own comment | rewrite their note into a finding — tag, problem, why, fix — keeping their point; add the marker, since the wording is now yours |
+| `ai: <hypothesis>` as a new comment on a line | check it against the code. Confirmed → rewrite this comment into a finding (it becomes the thread's `ai` root). Not confirmed → reply why; on «ок» delete the thread |
+
+**In the session** the reviewer can also say: «синк» — run a pass now; a
+request across the whole draft («убери все nit», «переведи всё на en») — apply
+it to every `ai` finding and report; «стоп» — stop the watcher and end the
+loop.

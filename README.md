@@ -33,12 +33,12 @@ From a shell: `claude plugin marketplace update claude-skills`, then
 An interactive, curation-first code review. It collects the diff itself, reads
 the full surrounding context of each changed file, reviews in ordered passes
 (intent → correctness → architecture → tests → readability → nits) with a
-severity and a confidence per finding, optionally runs an independent second
-pass in a sub-agent, and then walks you through curation before anything is
-posted. The conversation is in Russian; the language of posted comments is
-chosen at run time. The style is fixed everywhere — dump, questions, posted
-comments: dry, businesslike, no slang, no praise or grading of the reviewed
-code.
+severity and a confidence per finding, and optionally runs an independent second
+pass in a sub-agent. On a PR the findings go straight into **your GitHub draft
+review**: curation happens there, and the review is submitted only by you. The
+conversation is in Russian; the language of the findings is chosen at run
+time. The style is fixed everywhere — dump, questions, comments: dry,
+businesslike, no slang, no praise or grading of the reviewed code.
 
 The workflow itself is in
 [SKILL.md](plugins/korvin89/skills/code-review/SKILL.md); the review rules are
@@ -48,16 +48,14 @@ in [references/rubric.md](plugins/korvin89/skills/code-review/references/rubric.
 
 ```text
 /korvin89:code-review                 # review the working tree if dirty, else the current branch
-/korvin89:code-review 1234            # review PR #1234 (needs gh)
-/korvin89:code-review 1234 --post     # …and post the curated batch as one PR review
-/korvin89:code-review --quick         # single pass, dump findings, no questions
+/korvin89:code-review 1234            # review PR #1234 into your draft review (needs gh and jq)
+/korvin89:code-review --quick         # single pass, dump findings, no questions, no draft
 /korvin89:code-review --branch        # force branch mode even with a dirty tree
 ```
 
 | Argument | What it does |
 |---|---|
-| `[pr-number \| #number \| pr-url]` | Review that PR (needs `gh`). Omit it → auto-detect: working tree if dirty, otherwise the current branch against `origin/<default>`. |
-| `--post` | Post the finalized batch to the PR as a single review. Only in PR mode, only after you confirm. Ignored under `--quick`. |
+| `[pr-number \| #number \| pr-url]` | Review that PR; findings go into your draft review. Omit it → auto-detect: working tree if dirty, otherwise the current branch against `origin/<default>`. |
 | `--quick` | Skip the interactive flow: single pass, dump the findings, stop. |
 | `--branch` | Force branch mode even when the working tree is dirty. |
 
@@ -67,21 +65,41 @@ second pass, the comment language, and any focus areas to scrutinize.
 Claude can also trigger the skill on its own when you ask it to "review this
 PR" or "review my changes".
 
-### The flow (three stops)
+### The flow
 
 1. **Config** — one prompt with the three questions above.
-2. **Curation** — every finding is dumped in Russian, numbered, with a
-   severity (🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` / ❓ `question`) and a
-   confidence. You reply with the numbers to keep and optional per-item edits.
-   `4: +артефакты` attaches an artifact page (screenshot pairs main vs PR plus configs) to that
-   finding; see `korvin89:review-artifacts`.
-3. **Confirm or groom** — the final batch is rendered as it will be posted, in
-   your chosen language. Grooming loops back to curation.
+2. **Dump** — every finding is listed in the session in Russian, numbered, with
+   a severity (🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` / ❓ `question`) and a
+   confidence. Outside a PR the run ends here.
+3. **Draft** — on a PR every finding becomes a thread in your pending review,
+   opened with `🤖 AI generated`. If you have already started a draft (you can
+   review in parallel), the findings join it, and points your own comments
+   already make are left out. Findings in files outside the diff are listed in
+   the session for your summary.
+4. **Loop** — the session watches the draft in the background and edits it on
+   your commands until you press **Submit** in GitHub.
 
-With `--post`, the confirmed batch is posted as **one PR review**: inline
-comments on diff lines, no top-level legend. Every posted comment starts with
-`🤖 AI generated`. Findings on lines outside the diff are listed in
-the review body with their `path:line`. Posting requires `gh` and `jq`.
+### Talking to the agent in the draft
+
+Everything in the draft is under your account, so the agent goes by these
+rules:
+
+- a reply in a thread that starts with a 🤖 finding is addressed to the agent;
+- anywhere else, a comment starting with `ai:` is addressed to the agent: under
+  your own comment («ai: оформи», «ai: короче, на en») or as a new comment on a
+  line («ai: тут гонка с refetch?»);
+- every other comment of yours is your review; the agent never edits or deletes
+  it on its own.
+
+The agent picks up commands once you have been quiet for about a minute,
+handles them in one pass, and removes your commands and its own `🤖💬` replies
+when a thread is resolved, so the draft stays ready to submit. A thread where
+the agent asked a question stays until you answer. Typical commands: `удали`,
+`короче`, `переформулируй: …`, `nit` / `blocker`, `предложи фикс` (adds a
+GitHub suggestion), `где ещё?`, `артефакты` (see `korvin89:review-artifacts`),
+`почему?`, `ок`. In the session: «синк» runs a pass now, «стоп» stops
+watching. Watching ends by itself when you submit or discard the draft, or after
+two hours without commands.
 
 ### Per-repo conventions layer (not shipped here)
 

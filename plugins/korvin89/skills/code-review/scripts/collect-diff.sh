@@ -3,10 +3,10 @@
 # collect-diff.sh — auto-detect what to review and print it.
 #
 # Usage:
-#   collect-diff.sh [PR_NUMBER | #PR_NUMBER | PR_URL] [--branch] [--post] [--quick]
+#   collect-diff.sh [PR_NUMBER | #PR_NUMBER | PR_URL] [--branch] [--quick]
 #
-# The whole skill argument string can be passed through verbatim: --post and
-# --quick are accepted and ignored here. Anything else that is not a PR
+# The whole skill argument string can be passed through verbatim: --quick is
+# accepted and ignored here. Anything else that is not a PR
 # reference or --branch is an error (exit 4) — the script never guesses a mode
 # from a malformed argument.
 #
@@ -42,7 +42,7 @@ force_branch=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --branch)       force_branch=1 ;;
-    --post|--quick) ;;                                   # skill flags, not ours
+    --quick)        ;;                                   # a skill flag, not ours
     --*)            die 4 "Unknown flag: '$1'." ;;
     *)
       a="${1#\#}"                                            # allow "#123"
