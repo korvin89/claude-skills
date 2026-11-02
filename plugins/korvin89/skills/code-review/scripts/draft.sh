@@ -24,8 +24,10 @@
 # Comment kinds in `state` (draft comments are always the reviewer's account):
 #   ai         a finding: starts with "🤖 **AI generated**"
 #   bot        an agent reply: starts with "🤖💬"; never meant to be submitted
-#   cmd        addressed to the agent: starts with "ai:", or any other reply in
-#              a thread whose root is an `ai` finding
+#   cmd        addressed to the agent: starts with "ai:" — also "ии:", or either
+#              typed in the other keyboard layout ("фш:", "bb:"), the colon
+#              included ("фшЖ", "bb^", "bb%") — or is any other reply in a
+#              thread whose root is an `ai` finding
 #   own        the reviewer's own review comment
 #   published  already submitted, by anyone; context only
 # A thread is actionable when its latest cmd/bot comment is a cmd.
@@ -90,7 +92,7 @@ STATE_QUERY='query($owner: String!, $repo: String!, $num: Int!) {
       reviewThreads(last: 100) {
         nodes {
           id path line originalLine isOutdated subjectType
-          comments(first: 100) { nodes { id body state createdAt updatedAt author { login } } }
+          comments(first: 100) { nodes { id fullDatabaseId url body state createdAt updatedAt author { login } } }
         }
       }
     }
@@ -140,10 +142,11 @@ def lead: sub("^\\s+"; "");
                 kind: (if .state != "PENDING" then "published"
                        elif (.body | lead | startswith($marker)) then "ai"
                        elif (.body | lead | startswith($chat)) then "bot"
-                       elif (.body | lead | test("^ai:"; "i")) then "cmd"
+                       elif (.body | lead | test("^(ai|ии|фш|bb)[:;жЖ^%]"; "i")) then "cmd"
                        elif $ai_root and $i > 0 then "cmd"
                        else "own" end),
-                author: .author.login, created: .createdAt, updated: .updatedAt, body } ] }
+                db_id: .fullDatabaseId, url, author: .author.login,
+                created: .createdAt, updated: .updatedAt, body } ] }
       | .actionable = (([.comments[] | select(.kind == "cmd" or .kind == "bot")] | last | .kind?) == "cmd") ] }
 | .counts = (reduce (.threads[].comments[].kind) as $k
              ({ai: 0, own: 0, cmd: 0, bot: 0, published: 0}; .[$k] += 1)

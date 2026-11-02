@@ -32,7 +32,10 @@ Files bundled with this plugin:
   and configs on an artifact page, for a thread that asks for artifacts
   (Step 8). Read only then.
 
-`<pr>` below is the PR reference from `$ARGUMENTS`.
+`<pr>` below is the PR reference from `$ARGUMENTS`. `ai:` below stands for any
+command prefix `draft.sh` accepts: `ai:`, `ии:`, and both typed in the other
+keyboard layout (`фш:`, `bb:`, `фшЖ`, `bb^`); `draft.sh state` marks all of
+them `cmd`.
 
 ## Invariants
 
@@ -201,9 +204,10 @@ it, and curation happens there.
    first run in a session, add the protocol:
 
    > Находки в твоём драфте, Submit — за тобой. Мне можно писать прямо там:
-   > ответ в 🤖-треде или комментарий, начинающийся с `ai:` (на любой строке или
-   > под своим комментарием). Подхвачу, когда ты на минуту затихнешь, и сам
-   > уберу служебные реплики. Твои комментарии без `ai:` не трогаю.
+   > ответ в 🤖-треде или комментарий, начинающийся с `ai:` или `ии:` (на любой
+   > строке или под своим комментарием; `фш:` и `bb:` в другой раскладке тоже
+   > пойму). Подхвачу, когда ты на минуту затихнешь, и сам уберу служебные
+   > реплики. Твои комментарии без префикса не трогаю.
 
 Go on to Step 8 even when no finding went in: the reviewer can still call you
 with `ai:` from their own comments.
@@ -265,8 +269,20 @@ and arm the watcher again.
 | `артефакты` | follow `review-artifacts` with the finding as the subject; append its `Артефакты: <link>` line |
 | `почему?`, any question | answer with a reply; the thread stays open |
 | `ок`, `оставь` after your reply | delete the `cmd` comments and your replies; the target stays as it is |
+| `объедини с <link>` / `объедини с <path:line>`, one or more | merge the referenced threads into this one, which stays (see below) |
 | `ai: оформи` under the reviewer's own comment | rewrite their note into a finding — tag, problem, why, fix — keeping their point; add the marker, since the wording is now yours |
 | `ai: <hypothesis>` as a new comment on a line | check it against the code. Confirmed → rewrite this comment into a finding (it becomes the thread's `ai` root). Not confirmed → reply why; on «ок» delete the thread |
+
+**Merging.** Find each referenced thread in the state. A link carries a
+comment's `db_id` after `#discussion_r` or `#r`; `path:line` matches a thread's
+`path` — a file name is enough when unique — and `line`. Rewrite this thread's
+target into one finding that covers every place: the others' `path:line` in
+the text, the highest severity among the merged. A rewritten `own` target gets
+the marker, as with `оформи`. Then delete each merged thread whose root is
+`ai`, with all its comments. Any other merged thread stays — the reviewer's
+own comment is theirs to delete: fold its point in and name it in the session.
+A reference that matches nothing, or more than one thread, gets a reply asking
+which.
 
 **In the session** the reviewer can also say: «синк» — run a pass now; a
 request across the whole draft («убери все nit», «переведи всё на en») — apply

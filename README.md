@@ -87,7 +87,8 @@ rules:
 - a reply in a thread that starts with a 🤖 finding is addressed to the agent;
 - anywhere else, a comment starting with `ai:` is addressed to the agent: under
   your own comment («ai: оформи», «ai: короче, на en») or as a new comment on a
-  line («ai: тут гонка с refetch?»);
+  line («ai: тут гонка с refetch?»). `ии:` works too, and so do both typed in
+  the other keyboard layout: `фш:`, `bb:`, `фшЖ`;
 - every other comment of yours is your review; the agent never edits or deletes
   it on its own.
 
@@ -97,7 +98,8 @@ when a thread is resolved, so the draft stays ready to submit. A thread where
 the agent asked a question stays until you answer. Typical commands: `удали`,
 `короче`, `переформулируй: …`, `nit` / `blocker`, `предложи фикс` (adds a
 GitHub suggestion), `где ещё?`, `артефакты` (see `korvin89:review-artifacts`),
-`почему?`, `ок`. In the session: «синк» runs a pass now, «стоп» stops
+`почему?`, `ок`, `объедини с <ссылка или path:line>` (the thread you write it
+in stays; a file name and a line are enough). In the session: «синк» runs a pass now, «стоп» stops
 watching. Watching ends by itself when you submit or discard the draft, or after
 two hours without commands.
 
