@@ -204,6 +204,9 @@ only:
 Running it again with the same task continues where things stand: state comes
 from git and GitHub, not from the session.
 
+Worktrees live next to your checkout: for `~/src/app`, in
+`~/src/app.worktrees/<key>-<slug>/`, one per PR.
+
 ### The flow
 
 1. **Plan.** One PR by default, several only for a large task (no stacked
