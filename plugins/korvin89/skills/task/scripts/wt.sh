@@ -8,11 +8,12 @@
 #   wt.sh create <key> <slug>     branch <key>-<slug> from a freshly fetched
 #                                 origin/<base>, without upstream tracking;
 #                                 prints the worktree path
-#   wt.sh adopt <key> <pr-url>    work on an existing PR of the viewer. A PR
-#                                 from a fork pushes to the fork's remote. When
-#                                 its branch is checked out elsewhere (e.g. in
-#                                 the user's checkout), the worktree is detached
-#                                 and push.sh pushes HEAD:<branch>
+#   wt.sh adopt <key> <pr-url>    work on an existing PR of the viewer. The
+#                                 worktree is detached (push.sh pushes
+#                                 HEAD:<branch>) when the PR comes from a fork —
+#                                 a local branch of that name may be someone
+#                                 else's — or when its branch is checked out
+#                                 elsewhere, e.g. in the user's checkout
 #   wt.sh bootstrap <worktree>    install dependencies from the lockfile; print
 #                                 "env-candidate <path>" for untracked env files
 #                                 of the main checkout the worktree may need
@@ -58,11 +59,11 @@ case "$cmd" in
     if git show-ref --verify --quiet "refs/heads/$branch"; then
       die 4 "Branch $branch already exists; resume its worktree instead."
     fi
-    git fetch --quiet origin "$base"
+    git fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base"
     mkdir -p "$(task_wt_dir)"
     git worktree add --quiet --no-track -b "$branch" "$path" "origin/$base"
     path="$(CDPATH='' cd -P -- "$path" && pwd -P)"
-    task_set "$key" ".units[$idx].worktree = \$p | .units[$idx].status = \"in-progress\"" --arg p "$path"
+    task_set "$key" ".units[$idx].worktree = \$p | .units[$idx].status = \"in-progress\" | .units[$idx].created = true" --arg p "$path"
     printf '%s\n' "$path" ;;
 
   adopt)
@@ -72,7 +73,8 @@ case "$cmd" in
     task_lock "$key"
     gh_call "$GH_TMP/pr.json" pr view "$ref" \
       --json url,number,headRefName,baseRefName,isCrossRepository,headRepository,headRepositoryOwner,author || exit 1
-    me="$(gh api user --jq .login)"
+    gh_pr "$ref" || exit 1
+    me="$(gh api --hostname "$PR_HOST" user --jq .login)"
     [ "$(jq -r .author.login "$GH_TMP/pr.json")" = "$me" ] || die 7 "PR $ref is not yours; only your own PRs are adopted."
     url="$(jq -r .url "$GH_TMP/pr.json")"; branch="$(jq -r .headRefName "$GH_TMP/pr.json")"
     remote=origin
@@ -84,22 +86,24 @@ case "$cmd" in
         git remote add "$remote" "$(gh repo view "$fork" --json sshUrl --jq .sshUrl)"
       fi
     fi
-    git fetch --quiet "$remote" "$branch"
+    git fetch --quiet "$remote" "+refs/heads/$branch:refs/remotes/$remote/$branch"
     path="$(task_wt_dir)/$branch"; mkdir -p "$(task_wt_dir)"
-    detached=false
-    if git worktree list --porcelain | grep -qx "branch refs/heads/$branch"; then
-      # Checked out elsewhere — most likely the user's checkout. Never switch it.
+    detached=false; created=false
+    if [ "$remote" != origin ] || git worktree list --porcelain | grep -qx "branch refs/heads/$branch"; then
+      # A fork, or checked out elsewhere (most likely the user's checkout):
+      # never take over a local branch of that name.
       git worktree add --quiet --detach "$path" "$remote/$branch"; detached=true
     elif git show-ref --verify --quiet "refs/heads/$branch"; then
       git worktree add --quiet "$path" "$branch"
     else
-      git worktree add --quiet --no-track -b "$branch" "$path" "$remote/$branch"
+      git worktree add --quiet --no-track -b "$branch" "$path" "$remote/$branch"; created=true
     fi
     path="$(CDPATH='' cd -P -- "$path" && pwd -P)"
     base="$(jq -r .baseRefName "$GH_TMP/pr.json")"
     task_set "$key" '.base = $b | .units += [{slug: "pr", branch: $br, after: null, worktree: $p, pr: $u,
-                                              remote: $r, detached: ($d == "true"), status: "in-progress"}]' \
-      --arg b "$base" --arg br "$branch" --arg p "$path" --arg u "$url" --arg r "$remote" --arg d "$detached"
+                                              remote: $r, detached: ($d == "true"), created: ($c == "true"),
+                                              status: "in-progress"}]' \
+      --arg b "$base" --arg br "$branch" --arg p "$path" --arg u "$url" --arg r "$remote" --arg d "$detached" --arg c "$created"
     printf '%s\n' "$path"
     [ "$detached" = false ] || err "Note: $branch is checked out in another worktree; this one is detached and pushes HEAD:$branch, so that checkout will fall behind." ;;
 
@@ -131,10 +135,10 @@ case "$cmd" in
     task_lock "$KEY"
     pr="$(task_get "$KEY" ".units[$IDX].pr // empty")"; [ -n "$pr" ] || die 7 "Unit has no PR."
     branch="$(task_get "$KEY" ".units[$IDX].branch")"
-    detached="$(task_get "$KEY" ".units[$IDX].detached")"
+    detached="$(task_get "$KEY" ".units[$IDX].detached")"; created="$(task_get "$KEY" ".units[$IDX].created // false")"
     gh_pr "$pr" || exit 1
     info="$(gql 'query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) {
-        deleteBranchOnMerge pullRequest(number: $n) { state headRefOid viewerCanDeleteHeadRef headRef { name } } } }' \
+        deleteBranchOnMerge pullRequest(number: $n) { state headRefOid viewerCanDeleteHeadRef headRef { id name } } } }' \
       "$(jq -n --arg o "$PR_OWNER" --arg r "$PR_REPO" --argjson n "$PR_NUM" '{o: $o, r: $r, n: $n}')")" || exit 1
     [ "$(jq -r .data.repository.pullRequest.state <<<"$info")" = MERGED ] || die 7 "$pr is not merged; nothing removed."
     [ -z "$(git -C "$wt" status --porcelain)" ] || die 7 "$wt has uncommitted changes; nothing removed."
@@ -143,10 +147,14 @@ case "$cmd" in
       die 7 "$wt has commits that are not in the merged PR (local $local_head, PR $head); nothing removed."
     fi
     git worktree remove "$wt"
-    [ "$detached" = true ] || git branch -D "$branch" >/dev/null
+    # Only a branch the task created itself; never one the user had before.
+    if [ "$detached" != true ] && [ "$created" = true ]; then git branch -D "$branch" >/dev/null; fi
+    # The PR's own head ref, by id: for a fork that is the fork's branch, never a
+    # same-named branch of the base repository.
     if jq -e '.data.repository.deleteBranchOnMerge == false and .data.repository.pullRequest.viewerCanDeleteHeadRef
               and .data.repository.pullRequest.headRef != null' <<<"$info" >/dev/null; then
-      gh_call /dev/null api --hostname "$PR_HOST" -X DELETE "repos/$PR_OWNER/$PR_REPO/git/refs/heads/$branch" \
+      gql 'mutation($id: ID!) { deleteRef(input: {refId: $id}) { clientMutationId } }' \
+        "$(jq -c '{id: .data.repository.pullRequest.headRef.id}' <<<"$info")" >/dev/null \
         && printf 'deleted remote branch %s\n' "$branch"
     fi
     task_set "$KEY" ".units[$IDX].status = \"done\" | .units[$IDX].worktree = null"

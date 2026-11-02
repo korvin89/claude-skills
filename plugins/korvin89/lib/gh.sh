@@ -10,7 +10,8 @@
 #   gh_call <out-file> <gh args…>  gh under the deadline, stdout to <out-file>, stderr
 #                                  kept in $GH_TMP/gh.err; on failure one line on
 #                                  stderr, and an auth failure (HTTP 401, no login)
-#                                  leaves $GH_TMP/auth behind
+#                                  leaves $GH_TMP/auth behind — and $GH_AUTH_FLAG,
+#                                  when a parent watcher exported one
 #   gh_pr <pr>                     resolve a PR number or URL; sets PR_URL, PR_HOST,
 #                                  PR_OWNER, PR_REPO, PR_NUM
 #   gql <query> <variables-json>   print the response; fail on any GraphQL error
@@ -63,7 +64,10 @@ gh_call() {
   if [ "$rc" -eq 124 ]; then
     err "GitHub API error: no answer in ${GH_CALL_DEADLINE}s"
   else
-    grep -q -e 'HTTP 401' -e 'gh auth login' "$GH_TMP/gh.err" && : > "$GH_TMP/auth"
+    if grep -q -e 'HTTP 401' -e 'gh auth login' "$GH_TMP/gh.err"; then
+      : > "$GH_TMP/auth"
+      [ -z "${GH_AUTH_FLAG:-}" ] || : > "$GH_AUTH_FLAG"
+    fi
     err "GitHub API error: $(tail -n 1 "$GH_TMP/gh.err")"
   fi
   return 1

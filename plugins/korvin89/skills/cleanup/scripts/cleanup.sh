@@ -152,7 +152,7 @@ warnings() {
       if [ -f "$dir/active" ]; then
         echo "the task is active in a Claude session ($(cat "$dir/active")); say «стоп» there first"
       fi
-      while IFS=$'\t' read -r wt branch remote; do
+      while IFS=$'\t' read -r wt branch remote _; do
         [ -d "$wt" ] || continue
         if ! out="$(git -C "$wt" status --porcelain 2>/dev/null)"; then
           echo "git cannot read the worktree $wt, so its changes cannot be checked"
@@ -188,10 +188,12 @@ warnings() {
   return 0
 }
 
-# task_units <dir> — "<worktree>\t<branch>\t<remote>" of a task's units.
+# task_units <dir> — "<worktree>\t<branch>\t<remote>\t<own>" of a task's units;
+# <own> is true for a local branch the task created itself.
 task_units() {
   [ -f "$1/task.json" ] || return 0
-  jq -r '.units[] | select(.worktree != null) | "\(.worktree)\t\(.branch)\t\(.remote)"' "$1/task.json"
+  jq -r '.units[] | select(.worktree != null)
+         | "\(.worktree)\t\(.branch)\t\(.remote)\t\((.created // false) and (.detached | not))"' "$1/task.json"
 }
 
 # remove <key> <dir> <confirmed> — remove the scratch's worktrees, git's records
@@ -212,7 +214,7 @@ remove() {
     fi
   done < <(worktrees "$dir")
   # A task's worktrees live outside the scratch; its branches go only when pushed.
-  while IFS=$'\t' read -r wt branch remote; do
+  while IFS=$'\t' read -r wt branch remote own; do
     if [ -d "$wt" ] && ! git worktree remove --force "$wt" 2>/dev/null; then
       [ "$confirmed" = 1 ] || die 1 "Could not remove the worktree $wt; nothing more was removed."
       rm -rf "$wt"
@@ -221,7 +223,7 @@ remove() {
     for rec in "$common"/worktrees/*/gitdir; do
       [ -f "$rec" ] && [ "$(cat "$rec")" = "$wt/.git" ] && rm -rf "${rec%/gitdir}"
     done
-    if git show-ref --verify --quiet "refs/heads/$branch"; then
+    if [ "$own" = true ] && git show-ref --verify --quiet "refs/heads/$branch"; then
       if [ "$(git rev-list --count "$remote/$branch..$branch" 2>/dev/null || echo x)" = 0 ]; then
         git branch -D "$branch" >/dev/null && printf 'deleted branch %s (pushed)\n' "$branch"
       else

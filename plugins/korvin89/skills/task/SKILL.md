@@ -104,7 +104,11 @@ Otherwise run `task.sh resolve '<input>'` and branch on `kind`:
   3. Run `wt.sh adopt pr-<N> <url>`. If it warns that the worktree is
      detached, relay that: the user's own checkout of that branch will fall
      behind.
-  4. Go to Step 3.
+  4. Record the checks as in Step 1.3; `push.sh` refuses without them.
+  5. Run `threads.sh scan` on the new worktree. The PR may already hold
+     `valid`s and commands from before. List them and ask which to act on;
+     `task.sh seen` the rest, so old history is not replayed.
+  6. Go to Step 3.
 - **`issue`, `tracker`, `text`**:
   - When `candidates` is not empty, ask whether one of them is this task
     already: adopt its PR (as above) or start fresh.
@@ -119,7 +123,9 @@ Otherwise run `task.sh resolve '<input>'` and branch on `kind`:
     stdin: the task, the acceptance criteria you derive from it, the source.
 
 Then run `task.sh activate <key>` and say in one line that edits now go only
-into the task's worktrees, and that «пауза» lifts this.
+into the task's worktrees, and that «пауза» lifts this. Exit 9 from any task
+script means another live Claude session drives this task: stop, and tell the
+user to finish it there.
 
 ## Step 1 — Plan (a new task)
 
@@ -165,8 +171,12 @@ work.
       the report.
 5. **Push.** `push.sh <wt>`.
    - Exit 10: a check failed — fix and repeat.
-   - Exit 9: the remote branch moved and conflicts — handle it like a base
-     conflict (Step 3).
+   - Exit 11: the PR branch moved on GitHub and merging it conflicts; the merge
+     is in progress (`CONFLICT <path>` lines). Resolve it like a base conflict
+     (Step 3), `base.sh continue <wt>`, then push again.
+   - Exit 12: the push was rejected (a race) — run it again.
+   - Exit 4: no checks recorded — Step 1.3.
+   - Exit 7: uncommitted changes — commit them.
 6. **Draft PR.**
    - **Title:** modelled on `pr.sh titles`.
    - **Block file:**
@@ -202,9 +212,9 @@ or with `kill "$(cat <scratch>/watch-task.pid)"`.
 | `MERGED <pr>` | Step 4 |
 | `CLOSED <pr>` | tell the user; ask what happens to units that depend on it |
 | `READY <pr>` | note it: CI now runs in full on that PR |
-| `CONFLICTS <pr>` | `base.sh merge <wt>`. Resolve only mechanical conflicts (imports, lockfiles, adjacent edits), then `base.sh continue <wt>` and `push.sh <wt>`. Otherwise `base.sh abort <wt>`, `task.sh park <key> conflict:<pr> head:<sha>`, and ask the user |
+| `CONFLICTS <pr>` | `base.sh merge <wt>`; exit 11 lists the conflicts. Resolve only mechanical ones (imports, lockfiles, adjacent edits; `git -C <wt> checkout --theirs/--ours -- <path>` is allowed), then `base.sh continue <wt>` and `push.sh <wt>`. Otherwise `base.sh abort <wt>`, `task.sh park <key> conflict:<pr> head:<sha> "<why>"`, and ask the user |
 | `CI_FAILED <pr> <checks>` | per check, see *CI* below |
-| `CI_DONE <pr>` | nothing pending in its discussion or manual steps → «PR готов, выводи из draft»; name any skipped checks, which run once it is ready. Otherwise say what is left |
+| `CI_DONE <pr>` | every check that ran passed. Nothing pending in its discussion or manual steps → «PR готов, выводи из draft»; name the skipped checks (`summary.skipped`), which run once it is ready. Otherwise say what is left |
 | `COMMENTS <pr> <n>` | run a pass |
 | `AUTH …` / `ERROR …` / no line | relay it in one line; «следи» resumes. Don't re-arm |
 
@@ -232,16 +242,22 @@ or with `kill "$(cat <scratch>/watch-task.pid)"`.
 Every reply to a reviewer is a draft from `threads.sh reply`. You never publish
 one.
 
+A trigger you cannot act on now (a rung-5 question while the user is away)
+is parked so it stops waking you: `task.sh park <key> <id> comment:<mine>
+"<question>"`, with `mine` from the scan. It comes back as soon as the user
+writes anything on the PR.
+
 **CI.** For each failed check:
 1. Read `ci.sh log <wt> <check>` and classify:
    - **real failure** → fix it, commit with `CI-fix: <check>`, push. Once
-     `ci.sh fixes` reaches 3, `task.sh park <key> ci:<pr>:<check> head:<sha>`
-     and tell the user;
+     `ci.sh fixes` reaches 3, `task.sh park <key> ci:<pr>:<check> head:<sha>
+     "<why>"` and tell the user;
    - **flake** → `ci.sh rerun <wt> <check>`. If it refuses (2 reruns already,
      or not an Actions check), treat it as real;
    - **base broken** (the same check fails on the base branch: `gh run list
-     --branch <base>`) → `task.sh park <key> ci:<pr>:<check> base:<sha of
-     origin/base>`. It wakes when the base moves; then `base.sh merge`;
+     --branch <base>`) → `task.sh park <key> ci:<pr>:<check> base:<base>
+     "<why>"`, `<base>` being `base` from `ci.sh state`. It wakes when the base
+     moves on GitHub; then `base.sh merge`;
    - **passes locally** → `base.sh merge <wt>`, `push.sh <wt>`, and classify
      again.
 2. Never "fix" CI by changing workflows, config or tests to pass (see
@@ -260,7 +276,9 @@ one.
 
 ## Resume
 
-Run `follow.sh status <key>` and continue where reality stands:
+Run `follow.sh status <key>` and continue where reality stands. First, a
+worktree with commits that are not pushed (`ci.pushed` false) gets
+`push.sh`: a fix only counts as handled once the reviewer can see it.
 - **a unit with no worktree** → Step 2;
 - **a worktree with no PR** → finish Step 2;
 - **an open PR** → offer «следи» (Step 3);
@@ -271,8 +289,15 @@ Run `follow.sh status <key>` and continue where reality stands:
 ## Leaving it in the background
 
 The skill's own tool grant lasts one turn. On first use, tell the user once
-that an unattended run needs the task scripts allowed in
-`~/.claude/settings.json`, so that a permission prompt nobody sees doesn't
-stall it:
-`{"permissions": {"allow": ["Bash(bash *skills/task/scripts/*)"]}}` (the installed path carries
-the plugin version, so the pattern must not pin it).
+that an unattended run needs, in `~/.claude/settings.json` or the project's
+`.claude/settings.local.json`:
+- the task scripts allowed — the installed path carries the plugin version,
+  so the pattern must not pin it;
+- the worktrees dir as an additional working directory, because it lies
+  outside the project: edits and `git -C` there would prompt otherwise.
+
+```json
+{ "permissions": {
+    "allow": ["Bash(bash *skills/task/scripts/*)"],
+    "additionalDirectories": ["<parent>/<repo>.worktrees"] } }
+```

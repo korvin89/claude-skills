@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
 # push.sh — the only way a task pushes. In the unit's worktree, in order:
-#   1. fetch the unit's branch; when it moved on the remote (the author pushed,
-#      "Commit suggestion", "Update branch"), merge it in — never rebase;
-#   2. refuse uncommitted changes: everything pushed is committed;
+#   1. refuse uncommitted changes: everything pushed is committed;
+#   2. fetch the unit's branch; when it moved on the remote (the author pushed,
+#      "Commit suggestion", "Update branch"), merge it in — never rebase. On a
+#      conflict the merge stays in progress: resolve it like a base conflict
+#      (base.sh continue / abort), then run push.sh again;
 #   3. run the task's check commands (task.sh checks) at HEAD;
 #   4. push HEAD to refs/heads/<branch> of the unit's remote, fast-forward
 #      only: no --force, ever.
@@ -11,10 +13,11 @@
 # Usage: push.sh <worktree>
 #
 # Exit codes: 0 pushed (or nothing to push) · 1 git error · 4 bad usage or no
-#             checks recorded · 7 not a task worktree / uncommitted changes
-#             · 9 the remote branch moved and merging it conflicts (merge
-#             aborted), or the task is driven by another session
-#             · 10 a check failed (its output tail is printed)
+#             checks recorded (task.sh checks) · 7 not a task worktree, or
+#             uncommitted changes · 9 the task is driven by another session
+#             · 10 a check failed (its output tail is printed) · 11 the remote
+#             branch moved and merging it conflicts ("CONFLICT <path>" lines;
+#             the merge is in progress) · 12 the push was rejected; run again
 
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
@@ -32,20 +35,23 @@ if [ "$detached" != true ]; then
     || die 7 "$wt is not on its branch $branch; nothing pushed."
 fi
 
-# 1. The remote branch may have moved without us.
-if git -C "$wt" fetch --quiet "$remote" "$branch" 2>/dev/null; then
+# 1. Everything pushed is committed — and a merge needs a clean tree.
+[ -z "$(git -C "$wt" status --porcelain)" ] || die 7 "$wt has uncommitted changes (or a merge in progress); commit or resolve them first. Nothing pushed."
+
+# 2. The remote branch may have moved without us. An explicit refspec keeps the
+#    remote-tracking ref even in single-branch clones.
+if git -C "$wt" fetch --quiet "$remote" "+refs/heads/$branch:refs/remotes/$remote/$branch" 2>/dev/null; then
   if ! git -C "$wt" merge-base --is-ancestor "$remote/$branch" HEAD; then
     if ! git -C "$wt" merge --no-edit --quiet "$remote/$branch" >/dev/null 2>&1; then
-      files="$(git -C "$wt" diff --name-only --diff-filter=U | tr '\n' ' ')"
-      git -C "$wt" merge --abort
-      die 9 "$remote/$branch moved and merging it conflicts in: ${files}— merge aborted, nothing pushed."
+      if git -C "$wt" rev-parse --verify --quiet MERGE_HEAD >/dev/null; then
+        git -C "$wt" diff --name-only --diff-filter=U | sed 's/^/CONFLICT /'
+        die 11 "$remote/$branch moved and merging it conflicts; the merge is in progress. Nothing pushed."
+      fi
+      die 1 "Could not merge $remote/$branch into $wt; nothing pushed."
     fi
     printf 'merged %s/%s (moved on the remote)\n' "$remote" "$branch"
   fi
 fi
-
-# 2. Everything pushed is committed.
-[ -z "$(git -C "$wt" status --porcelain)" ] || die 7 "$wt has uncommitted changes; commit them first. Nothing pushed."
 
 # 3. The repository's checks, at HEAD.
 n="$(task_get "$key" '.checks | length')"
@@ -67,5 +73,5 @@ sha="$(git -C "$wt" rev-parse HEAD)"
 if [ "$(git -C "$wt" rev-parse --verify --quiet "$remote/$branch" || true)" = "$sha" ]; then
   printf 'nothing to push: %s/%s is already at %s\n' "$remote" "$branch" "$sha"; exit 0
 fi
-git -C "$wt" push --quiet "$remote" "HEAD:refs/heads/$branch" || die 9 "Push of $branch was rejected; fetch and run push.sh again."
+git -C "$wt" push --quiet "$remote" "HEAD:refs/heads/$branch" || die 12 "Push of $branch was rejected; run push.sh again."
 printf 'pushed %s to %s/%s\n' "$sha" "$remote" "$branch"

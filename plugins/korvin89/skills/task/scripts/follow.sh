@@ -9,8 +9,8 @@
 #                             of truth after a context compaction
 #   follow.sh watch <key> [--interval S] [--max-interval S] [--quiet S]
 #                             watch every unit with an open PR and print one line:
-#     MERGED <pr>             merged
-#     CLOSED <pr>             closed without a merge
+#     MERGED <pr>             merged       } announced once; that PR is not
+#     CLOSED <pr>             closed       } polled again
 #     READY <pr>              the author moved it out of draft
 #     CONFLICTS <pr>          the base conflicts
 #     CI_FAILED <pr> <checks> failed checks, none of them parked on this head
@@ -22,8 +22,10 @@
 #   --interval (20) to --max-interval (300).
 #
 # Parked events (task.sh park) stay quiet while their lift has not changed:
-#   head:<sha>   the PR head        base:<sha>   origin/<base>
-# Park ids used here: ci:<pr>:<check>, conflict:<pr>.
+#   head:<sha>      the PR head
+#   base:<sha>      the base branch head on GitHub (baseRefOid)
+#   comment:<n>     the author's comment count on the PR (threads.sh `mine`)
+# Park ids: ci:<pr>:<check>, conflict:<pr>, or a trigger's comment id.
 #
 # Exit codes: 0 ok · 1 GitHub error · 4 bad usage · 9 the task is driven by
 #             another session
@@ -40,9 +42,12 @@ gh_require; gh_tmp_init; trap 'rm -rf "$GH_TMP"; watch_release' EXIT
 HERE="$(dirname "$0")"
 LEDGER="$(task_dir "$KEY")/ledger.json"
 
-# open_units — "<worktree>\t<pr>" for every unit with an open PR and a worktree.
+# open_units — "<worktree>\t<pr>" for every unit with an open PR and a worktree,
+# leaving out PRs already announced as merged or closed.
 open_units() {
-  task_get "$KEY" '.units[] | select(.pr != null and .worktree != null and .status != "done") | "\(.worktree)\t\(.pr)"'
+  jq -r --slurpfile l "$LEDGER" '($l[0].ended // {}) as $e
+    | .units[] | select(.pr != null and .worktree != null and .status != "done" and ($e[.pr] == null))
+    | "\(.worktree)\t\(.pr)"' "$(task_dir "$KEY")/task.json"
 }
 
 # parked <id> <head> <base> — true while that event is parked and its lift holds.
@@ -53,21 +58,18 @@ parked() {
       (.lift | startswith("base:") and .[5:] == $base)))' "$LEDGER" >/dev/null
 }
 
-ledger_set() {   # ledger_set <jq> [jq args…]
-  local filter="$1"; shift
-  jq "$@" "$filter" "$LEDGER" > "$LEDGER.tmp" && mv "$LEDGER.tmp" "$LEDGER"
-}
+ledger_set() { ledger_update "$KEY" "$@"; }
 
 task_probe() {
-  local wt pr ci th base head n fp="" waits=0 failed
+  local wt pr ci th base head n ids fp="" waits=0 failed
   while IFS=$'\t' read -r wt pr; do
     [ -n "$wt" ] || continue
     ci="$(bash "$HERE/ci.sh" state "$wt")" || return 1
-    head="$(jq -r .head <<<"$ci")"
-    base="$(git -C "$wt" rev-parse --verify --quiet "origin/$(task_get "$KEY" .base)" || true)"
+    head="$(jq -r .head <<<"$ci")"; base="$(jq -r '.base // ""' <<<"$ci")"
     case "$(jq -r .state <<<"$ci")" in
-      MERGED) printf 'NOW\tMERGED %s\n' "$pr"; return 0 ;;
-      CLOSED) printf 'NOW\tCLOSED %s\n' "$pr"; return 0 ;;
+      MERGED|CLOSED)
+        ledger_set '.ended = ((.ended // {}) + {($pr): $s})' --arg pr "$pr" --arg s "$(jq -r .state <<<"$ci")"
+        printf 'NOW\t%s %s\n' "$(jq -r .state <<<"$ci")" "$pr"; return 0 ;;
     esac
     if [ "$(jq -r .draft <<<"$ci")" = false ] && ! jq -e --arg pr "$pr" 'any(.ready[]?; . == $pr)' "$LEDGER" >/dev/null; then
       ledger_set '.ready = ((.ready // []) + [$pr])' --arg pr "$pr"
@@ -87,10 +89,14 @@ task_probe() {
       printf 'NOW\tCI_DONE %s\n' "$pr"; return 0
     fi
     th="$(bash "$HERE/threads.sh" scan "$wt")" || return 1
-    n="$(jq '(.valid + .commands + .bots) | length' <<<"$th")"
+    # Triggers parked on the head or the base stay quiet (comment: lifts are
+    # handled by threads.sh itself).
+    ids="$(jq -r '(.valid + .commands + .bots)[].id' <<<"$th" | while IFS= read -r id; do
+             parked "$id" "$head" "$base" || printf '%s\n' "$id"; done)"
+    n="$(printf '%s' "$ids" | grep -c . || true)"
     if [ "$n" -gt 0 ]; then
       waits=$((waits + n))
-      fp="$fp$(jq -c '[(.valid + .commands + .bots)[] | .id]' <<<"$th")"
+      fp="$fp$(printf '%s' "$ids" | tr '\n' ',')"
       WAIT_PR="$pr"
     fi
   done < <(open_units)
@@ -117,7 +123,7 @@ case "$cmd" in
       '{key: $t.key, source: $t.source, base: $t.base, checks: $t.checks, units: $units, parked: $l.parked}' ;;
 
   watch)
-    WATCH_INTERVAL=20; WATCH_MAX_INTERVAL=300; WATCH_TIMEOUT=0
+    WATCH_INTERVAL=20; WATCH_MAX_INTERVAL=300; WATCH_TIMEOUT=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --interval)     WATCH_INTERVAL="${2:-}" ;;

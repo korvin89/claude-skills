@@ -17,7 +17,9 @@
 #   task_wt_dir               the sibling dir that holds the task worktrees
 #   task_get <key> <jq>       read task.json through a jq filter
 #   task_set <key> <jq> [jq args…]
-#                             rewrite task.json through a jq filter, atomically
+#   ledger_update <key> <jq> [jq args…]
+#                             rewrite task.json / ledger.json through a jq
+#                             filter, atomically and under a lock
 #   task_of <path>            "<key>\t<unit index>" of the unit whose worktree
 #                             holds <path>, or nothing
 #   task_lock <key>           take the task's lock for this Claude session
@@ -47,9 +49,27 @@ task_wt_dir() {
 task_get() { jq -r "$2" "$(task_dir "$1")/task.json"; }
 
 task_set() {
-  local key="$1" filter="$2" file; shift 2
-  file="$(task_dir "$key")/task.json"
-  jq "$@" "$filter" "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+  local key="$1"; shift
+  json_update "$(task_dir "$key")/task.json" "$@"
+}
+
+ledger_update() {
+  local key="$1"; shift
+  json_update "$(task_dir "$key")/ledger.json" "$@"
+}
+
+# json_update <file> <jq> [jq args…] — read-modify-write under a mkdir lock,
+# through a private temp file: the watcher and the agent write the same files.
+json_update() {
+  local file="$1" filter="$2" tmp n=0 rc=0; shift 2
+  until mkdir "$file.lock" 2>/dev/null; do
+    n=$((n + 1)); [ "$n" -lt 100 ] || die 1 "Could not lock $file (stale $file.lock?)."
+    sleep 0.1
+  done
+  tmp="$(mktemp "$file.XXXXXX")"
+  if jq "$@" "$filter" "$file" > "$tmp"; then mv "$tmp" "$file"; else rc=1; rm -f "$tmp"; fi
+  rmdir "$file.lock"
+  return "$rc"
 }
 
 task_of() {
@@ -71,7 +91,9 @@ task_lock() {
   me="${CLAUDE_CODE_SESSION_ID:-shell-$PPID}"
   if [ -f "$file" ]; then
     read -r holder pid _ < "$file" || true
-    if [ "$holder" != "$me" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    # Another session, alive. The same Claude process (e.g. after /clear gave it
+    # a new session id) is still us.
+    if [ "$holder" != "$me" ] && [ -n "$pid" ] && [ "$pid" != "${CLAUDE_PID:-$PPID}" ] && kill -0 "$pid" 2>/dev/null; then
       die 9 "Task $1 is driven by another Claude session (pid $pid). Finish it there, or close that session."
     fi
   fi

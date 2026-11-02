@@ -68,12 +68,15 @@ case "$cmd" in
     [ -f "$block" ] || die 4 "No block file: $block"
     task_lock "$KEY"
     pr="$(task_get "$KEY" ".units[$IDX].pr // empty")"; [ -n "$pr" ] || die 7 "This unit has no PR yet."
-    gh_call "$GH_TMP/body.md" pr view "$pr" --json body --jq .body || exit 1
-    body_block "$GH_TMP/body.md" | grep -E '^[[:space:]]*- \[[xX]\] ' | sed -E 's/^[[:space:]]*- \[[xX]\] //' > "$GH_TMP/done.txt" || true
-    # The new block, with the author's ticks carried over by item text.
-    awk 'NR == FNR { done[$0] = 1; next }
+    gh_call "$GH_TMP/raw.md" pr view "$pr" --json body --jq .body || exit 1
+    tr -d '\r' < "$GH_TMP/raw.md" > "$GH_TMP/body.md"      # bodies edited on the web are CRLF
+    { body_block "$GH_TMP/body.md" | grep -E '^[[:space:]]*- \[[xX]\] ' || true; } \
+      | sed -E 's/^[[:space:]]*- \[[xX]\] //' > "$GH_TMP/done.txt"
+    # The new block, with the author's ticks carried over by item text. The
+    # ticked items are read with getline: an empty list must not swallow the block.
+    awk -v d="$GH_TMP/done.txt" 'BEGIN { while ((getline l < d) > 0) done[l] = 1 }
          match($0, /^[[:space:]]*- \[ \] /) { item = substr($0, RLENGTH + 1); if (item in done) sub(/- \[ \] /, "- [x] ") }
-         { print }' "$GH_TMP/done.txt" "$block" > "$GH_TMP/block.md"
+         { print }' "$block" > "$GH_TMP/block.md"
     if grep -qxF "$START" "$GH_TMP/body.md" && grep -qxF "$END" "$GH_TMP/body.md"; then
       awk -v s="$START" -v e="$END" -v f="$GH_TMP/block.md" '
         $0 == s { print; while ((getline l < f) > 0) print l; skip = 1; next }
@@ -89,7 +92,8 @@ case "$cmd" in
     [ $# -eq 1 ] || usage
     unit_of "$1"
     pr="$(task_get "$KEY" ".units[$IDX].pr // empty")"; [ -n "$pr" ] || die 7 "This unit has no PR yet."
-    gh_call "$GH_TMP/body.md" pr view "$pr" --json body --jq .body || exit 1
+    gh_call "$GH_TMP/raw.md" pr view "$pr" --json body --jq .body || exit 1
+    tr -d '\r' < "$GH_TMP/raw.md" > "$GH_TMP/body.md"
     { body_block "$GH_TMP/body.md" | grep -E '^[[:space:]]*- \[[ xX]\] Manual step:' || true; } \
       | jq -R -s -c 'split("\n") | map(select(length > 0)
           | {done: test("^\\s*- \\[[xX]\\]"), text: sub("^\\s*- \\[[ xX]\\] Manual step:\\s*"; "")})' ;;

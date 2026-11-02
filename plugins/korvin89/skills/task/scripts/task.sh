@@ -16,9 +16,9 @@
 #                                the lint/test commands push.sh runs before a push
 #   task.sh unit <key> <slug> [--after <slug>]
 #                                add a plan unit (one PR); branch <key>-<slug>
-#   task.sh park <key> <id> <lift> <note>
+#   task.sh park <key> <id> <lift> [<note>]
 #                                park an event until <lift> changes: head:<sha>,
-#                                base:<sha> or comment:<author-comment-count>
+#                                base:<sha> or comment:<n> (threads.sh `mine`)
 #   task.sh unpark <key> <id>
 #   task.sh seen <key> <comment-id>…
 #                                comments read that ask for nothing
@@ -67,11 +67,16 @@ case "$cmd" in
     [ $# -eq 1 ] || usage
     gh_require; gh_tmp_init; trap 'rm -rf "$GH_TMP"' EXIT
     input="$1"; root="$(task_root)"
-    # A key we already track wins.
-    if [ -f "$root/task-$input/task.json" ]; then
-      jq -c '{kind: "task", key, url: .source.url, title: .source.title, candidates: []}' "$root/task-$input/task.json"
-      exit 0
-    fi
+    # A task we already track wins: by its key (any case), or by one of its PRs.
+    lc="$(printf '%s' "${input#\#}" | tr '[:upper:]' '[:lower:]')"
+    for f in "$root/task-$lc/task.json" "$root"/task-*/task.json; do
+      [ -f "$f" ] || continue
+      if [ "$f" = "$root/task-$lc/task.json" ] \
+         || jq -e --arg i "$input" 'any(.units[]; .pr != null and (.pr == $i or .pr == ($i | sub("/$"; ""))))' "$f" >/dev/null; then
+        jq -c '{kind: "task", key, url: .source.url, title: .source.title, candidates: []}' "$f"
+        exit 0
+      fi
+    done
     read -r PR_HOST owner repo <<<"$(repo_of_cwd)"
     num=""; url=""
     case "$input" in
@@ -168,21 +173,19 @@ case "$cmd" in
     printf '%s-%s\n' "$key" "$slug" ;;
 
   park)
-    [ $# -eq 4 ] || usage
-    f="$(task_dir "$1")/ledger.json"
-    jq --arg id "$2" --arg lift "$3" --arg note "$4" \
-      '.parked = ([.parked[] | select(.id != $id)] + [{id: $id, lift: $lift, note: $note}])' "$f" > "$f.tmp" && mv "$f.tmp" "$f" ;;
+    [ $# -eq 3 ] || [ $# -eq 4 ] || usage
+    case "$3" in head:?*|base:?*|comment:[0-9]*) ;; *) die 4 "A lift is head:<sha>, base:<sha> or comment:<n>: $3" ;; esac
+    ledger_update "$1" '.parked = ([.parked[] | select(.id != $id)] + [{id: $id, lift: $lift, note: $note}])' \
+      --arg id "$2" --arg lift "$3" --arg note "${4:-}" ;;
 
   unpark)
     [ $# -eq 2 ] || usage
-    f="$(task_dir "$1")/ledger.json"
-    jq --arg id "$2" '.parked = [.parked[] | select(.id != $id)]' "$f" > "$f.tmp" && mv "$f.tmp" "$f" ;;
+    ledger_update "$1" '.parked = [.parked[] | select(.id != $id)]' --arg id "$2" ;;
 
   seen)
     [ $# -ge 2 ] || usage
     key="$1"; shift
-    f="$(task_dir "$key")/ledger.json"
-    jq --args '.seen = (.seen + $ARGS.positional | unique)' "$@" < "$f" > "$f.tmp" && mv "$f.tmp" "$f" ;;
+    ledger_update "$key" '.seen = (.seen + $ids | unique)' --argjson ids "$(jq -n -c '$ARGS.positional' --args "$@")" ;;
 
   activate)
     [ $# -eq 1 ] || usage

@@ -6,26 +6,30 @@
 # says SUCCESS.
 #
 # Usage:
-#   ci.sh state <worktree>          JSON: the PR's head, draft and mergeable
-#                                   state, every check (kind: actions / app /
-#                                   status) and a summary — pending, failed,
-#                                   skipped, expected (declared failures),
-#                                   green (nothing pending, failed or skipped)
+#   ci.sh state <worktree>          JSON: the PR's head and base heads, draft
+#                                   and mergeable state, every check (kind:
+#                                   actions / app / status) and a summary —
+#                                   pending, failed, skipped, expected (declared
+#                                   failures), green (nothing pending or failed;
+#                                   skipped checks are listed, not counted: on a
+#                                   draft they run only once it is ready)
 #   ci.sh log <worktree> <check>    the failed run's log, trimmed: up to 40
 #                                   "##[error]" lines, then the last 120 lines
 #                                   (Actions only; others print their link)
 #   ci.sh rerun <worktree> <check>  rerun a failed Actions check — only while its
 #                                   run is on the PR head, at most 2 reruns by
 #                                   GitHub's own attempt counter
-#   ci.sh fixes <worktree> <check>  how many commits on the branch carry
-#                                   "CI-fix: <check>" (the cap is 3)
+#   ci.sh fixes <worktree> <check>  how many commits of this branch (since
+#                                   origin/<base>) carry "CI-fix: <check>"; the
+#                                   cap is 3
 #
 # Checks that fail by design are listed in AGENTS.md of the base branch, read
 # from origin/<base> (the branch itself can't change them), as bullets under
 # a "## Expected failing checks" heading.
-# Check names seen on an earlier head are remembered in the task ledger: right
-# after a push, a check that has not shown up yet counts as pending, not as
-# passed.
+# Check names are remembered per PR in the task ledger: those of the previous
+# head and every name seen on the current one. Right after a push, or while a
+# job waits for another (`needs:`), a check that has not shown up yet counts as
+# pending, not as passed.
 #
 # Exit codes: 0 ok · 1 GitHub error · 4 bad usage · 7 not a task worktree, or
 #             a rerun refused
@@ -45,7 +49,7 @@ gh_pr "$pr" || exit 1
 ledger="$(task_dir "$KEY")/ledger.json"
 
 STATE_QUERY='query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { pullRequest(number: $n) {
-  state isDraft mergeable headRefOid
+  state isDraft mergeable headRefOid baseRefOid
   commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) { nodes { __typename
     ... on CheckRun { name status conclusion detailsUrl checkSuite { app { slug } workflowRun { databaseId } } }
     ... on StatusContext { context state targetUrl } } } } } } } } } }'
@@ -55,10 +59,10 @@ state_json() {
   local raw base expected seen
   raw="$(gql "$STATE_QUERY" "$(jq -n --arg o "$PR_OWNER" --arg r "$PR_REPO" --argjson n "$PR_NUM" '{o: $o, r: $r, n: $n}')")" || return 1
   base="$(task_get "$KEY" .base)"
-  expected="$(git -C "$WT" show "origin/$base:AGENTS.md" 2>/dev/null \
+  expected="$( { git -C "$WT" show "origin/$base:AGENTS.md" 2>/dev/null || true; } \
     | awk '/^## / { on = ($0 ~ /^## Expected failing checks/) ; next } on && /^[-*] / { sub(/^[-*] +/, ""); gsub(/`/, ""); print }' \
     | jq -R -s -c 'split("\n") | map(select(length > 0))')"
-  seen="$(jq -c --arg pr "$pr" '.checks_seen[$pr] // []' "$ledger")"
+  seen="$(jq -c --arg pr "$pr" '.checks_seen[$pr] // {}' "$ledger")"
   jq -c --argjson expected "$expected" --argjson seen "$seen" --arg local "$(git -C "$WT" rev-parse HEAD)" '
     .data.repository.pullRequest as $p
     | [ ($p.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // [])[]
@@ -74,18 +78,22 @@ state_json() {
              result: (if .state == "SUCCESS" then "ok" elif (.state == "PENDING" or .state == "EXPECTED") then "pending" else "failed" end)}
           end ] as $checks
     | ([$checks[].name]) as $names
-    | { state: $p.state, draft: $p.isDraft, mergeable: $p.mergeable, head: $p.headRefOid,
+    | (if ($seen.head // "") == $p.headRefOid then (($seen.prev // []) + ($seen.names // []))
+       else ($seen.names // []) end | unique) as $known
+    | { state: $p.state, draft: $p.isDraft, mergeable: $p.mergeable, head: $p.headRefOid, base: $p.baseRefOid,
         pushed: ($p.headRefOid == $local), checks: $checks,
         summary: {
-          pending: ([$checks[] | select(.result == "pending") | .name] + [$seen[] | select(. as $s | any($names[]; . == $s) | not)]),
+          pending: ([$checks[] | select(.result == "pending") | .name] + [$known[] | select(. as $s | any($names[]; . == $s) | not)]),
           failed:  [$checks[] | select(.result == "failed" and (.name as $n | any($expected[]; . == $n) | not)) | .name],
           skipped: [$checks[] | select(.result == "skipped") | .name],
           expected: [$checks[] | select(.result == "failed" and (.name as $n | any($expected[]; . == $n))) | .name] } }
-    | .summary.green = ((.summary.pending + .summary.failed + .summary.skipped | length) == 0 and ($checks | length) > 0)
+    | .summary.green = ((.summary.pending + .summary.failed | length) == 0 and ($checks | length) > 0)
   ' <<<"$raw" > "$GH_TMP/state.json"
-  # Remember the names, so a fresh push without checks yet is not read as green.
-  jq --arg pr "$pr" --argjson n "$(jq -c '[.checks[].name]' "$GH_TMP/state.json")" \
-    'if ($n | length) > 0 then .checks_seen[$pr] = ($n | unique) else . end' "$ledger" > "$ledger.tmp" && mv "$ledger.tmp" "$ledger"
+  # Remember the names per head, so a fresh push is not read as green early.
+  ledger_update "$KEY" '(.checks_seen[$pr] // {}) as $s
+    | .checks_seen[$pr] = (if ($s.head // "") == $h then $s + {names: (($s.names // []) + $n | unique)}
+                           else {head: $h, prev: (if ($s.names // []) == [] then ($s.prev // []) else $s.names end), names: $n} end)' \
+    --arg pr "$pr" --arg h "$(jq -r .head "$GH_TMP/state.json")" --argjson n "$(jq -c '[.checks[].name] | unique' "$GH_TMP/state.json")"
   cat "$GH_TMP/state.json"
 }
 
@@ -106,7 +114,7 @@ case "$cmd" in
     if [ "$(jq -r .kind <<<"$c")" != actions ]; then
       printf 'No log here for a %s check; see %s\n' "$(jq -r .kind <<<"$c")" "$(jq -r '.url // "-"' <<<"$c")"; exit 0
     fi
-    gh_call "$GH_TMP/log" run view "$(jq -r .run <<<"$c")" --repo "$PR_OWNER/$PR_REPO" --log-failed || exit 1
+    gh_call "$GH_TMP/log" run view "$(jq -r .run <<<"$c")" --repo "$PR_HOST/$PR_OWNER/$PR_REPO" --log-failed || exit 1
     sed $'s/\x1b\\[[0-9;]*m//g' "$GH_TMP/log" > "$GH_TMP/clean"
     if grep -q '##\[error\]' "$GH_TMP/clean"; then
       echo "--- errors"; grep '##\[error\]' "$GH_TMP/clean" | head -n 40
@@ -124,12 +132,13 @@ case "$cmd" in
     [ "$(jq -r .status "$GH_TMP/run.json")" = completed ] || die 7 "Run $run is still going; nothing rerun."
     attempt="$(jq -r .run_attempt "$GH_TMP/run.json")"
     [ "$attempt" -lt 3 ] || die 7 "Run $run already had $attempt attempts (2 reruns); treat $1 as a real failure."
-    gh_call /dev/null run rerun "$run" --failed --repo "$PR_OWNER/$PR_REPO" || exit 1
+    gh_call /dev/null run rerun "$run" --failed --repo "$PR_HOST/$PR_OWNER/$PR_REPO" || exit 1
     printf 'rerun of %s requested (attempt %s)\n' "$1" "$((attempt + 1))" ;;
 
   fixes)
     [ $# -eq 1 ] || usage
-    git -C "$WT" log --format='%(trailers:key=CI-fix,valueonly)' HEAD | grep -cxF "$1" || true ;;
+    { git -C "$WT" log --format='%(trailers:key=CI-fix,valueonly)' "origin/$(task_get "$KEY" .base)..HEAD" || true; } \
+      | grep -cxF "$1" || true ;;
 
   *) usage ;;
 esac

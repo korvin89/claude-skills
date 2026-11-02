@@ -272,11 +272,15 @@ While a task is active, a hook in the skill blocks:
 - `gh pr ready` / `merge`;
 - GitHub writes outside the task's scripts.
 
-`pause` lifts it. For a background run, allow the task scripts in
-`~/.claude/settings.json`; the skill's own grant lasts only one turn:
+`pause` lifts it. For a background run, the skill's own grant lasts only one
+turn, so add two things to `~/.claude/settings.json`:
+- an allow rule for the task scripts;
+- the worktrees dir, which lies outside the project.
 
 ```json
-{ "permissions": { "allow": ["Bash(bash *skills/task/scripts/*)"] } }
+{ "permissions": {
+    "allow": ["Bash(bash *skills/task/scripts/*)"],
+    "additionalDirectories": ["<parent>/<repo>.worktrees"] } }
 ```
 
 Requires `gh` and `jq` 1.6+. `/korvin89:cleanup task-<key>` removes an

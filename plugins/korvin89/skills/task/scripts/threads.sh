@@ -2,20 +2,25 @@
 #
 # threads.sh — what the PR's discussion asks of the agent. Only three sources
 # may change code:
-#   - the author's `valid` in someone else's thread: the first word of the
-#     comment, in either keyboard layout ("valid", "мфдшв"); the rest of the
-#     comment refines the fix. "invalid", "not valid", "validate" never match;
+#   - the author's `valid` in someone else's unresolved thread: the first word
+#     of the comment, in either keyboard layout ("valid", "мфдшв"), quoted
+#     lines and emphasis aside; the rest of the comment refines the fix.
+#     "invalid", "not valid", "validate", "valid?" never match;
 #   - the author's command: a comment starting with the code-review prefixes
 #     (ai:, ии:, фш:, bb:, …), in a thread or as a PR comment;
-#   - a review thread opened by an allowlisted bot (task.json .bots, default
-#     copilot-pull-request-reviewer).
+#   - an unresolved review thread opened by an allowlisted bot (task.json
+#     .bots, default copilot-pull-request-reviewer) that the author has not
+#     answered yet.
 # Everything else — review bodies, other people's comments, other bots — is
 # information only. Comments the agent wrote carry <!-- korvin89:task --> and
 # never count as the author's.
 #
-# Handled means: a commit on the branch carries "Addresses: <comment id>"
-# (fixes), or the id is in the task ledger's `seen` (task.sh seen) — for
-# commands that need no code, and for information already shown.
+# Handled means: a commit pushed to the PR branch carries "Addresses:
+# <comment id>" (a fix only counts once the reviewer can see it), or the id is
+# in the task ledger's `seen` (task.sh seen) — commands that need no code, and
+# information already shown. Ids parked with task.sh park are left out while
+# their lift holds; `mine` (the author's comments on the PR) drives the
+# comment:<n> lift.
 #
 # Usage:
 #   threads.sh scan <worktree>     JSON: valid, commands, bots (unhandled
@@ -41,7 +46,7 @@ set -euo pipefail
 TASK_MARK='<!-- korvin89:task -->'
 AI_MARK='🤖 **AI generated**'
 PREFIX='^(ai|ии|фш|bb)[:;жЖ^%]'
-VALID='^\s*(valid|мфдшв)([^[:alnum:]_]|$)'
+VALID='^\s*(valid|мфдшв)([^[:alnum:]_?]|$)'
 
 usage() { die 4 "Usage: threads.sh scan|reply|resolve <worktree> [<thread-id>]"; }
 [ $# -ge 2 ] || usage
@@ -56,7 +61,7 @@ gh_pr "$pr" || exit 1
 PR_QUERY='query($o: String!, $r: String!, $n: Int!) {
   viewer { login }
   repository(owner: $o, name: $r) { pullRequest(number: $n) {
-    reviewThreads(first: 100) { nodes { id isResolved isOutdated path line viewerCanResolve
+    reviewThreads(last: 100) { nodes { id isResolved isOutdated path line viewerCanResolve
       comments(first: 100) { nodes { id fullDatabaseId state body createdAt url author { __typename login } } } } }
     reviews(last: 50) { nodes { id fullDatabaseId state body submittedAt url author { __typename login } } }
     comments(last: 100) { nodes { id fullDatabaseId body createdAt url author { __typename login } } } } } }'
@@ -66,37 +71,44 @@ case "$cmd" in
     [ $# -eq 0 ] || usage
     raw="$(gql "$PR_QUERY" "$(jq -n --arg o "$PR_OWNER" --arg r "$PR_REPO" --argjson n "$PR_NUM" '{o: $o, r: $r, n: $n}')")" || exit 1
     remote="$(task_get "$KEY" ".units[$IDX].remote")"; branch="$(task_get "$KEY" ".units[$IDX].branch")"
-    handled="$( { git -C "$WT" log --format='%(trailers:key=Addresses,valueonly)' HEAD 2>/dev/null
-                  git -C "$WT" log --format='%(trailers:key=Addresses,valueonly)' "$remote/$branch" 2>/dev/null || true; } \
+    handled="$( { git -C "$WT" log --format='%(trailers:key=Addresses,valueonly)' "$remote/$branch" 2>/dev/null || true; } \
                 | tr ', ' '\n\n' | sed '/^$/d' | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')"
     seen="$(jq -c '.seen' "$(task_dir "$KEY")/ledger.json")"
+    parked="$(jq -c '[.parked[] | select(.lift | startswith("comment:")) | {id, n: (.lift[8:] | tonumber? // -1)}]' "$(task_dir "$KEY")/ledger.json")"
     bots="$(task_get "$KEY" '.bots // ["copilot-pull-request-reviewer"]' | jq -c .)"
     jq --arg mark "$TASK_MARK" --arg prefix "$PREFIX" --arg valid "$VALID" \
-       --argjson handled "$handled" --argjson seen "$seen" --argjson bots "$bots" '
+       --argjson handled "$handled" --argjson seen "$seen" --argjson bots "$bots" --argjson parked "$parked" '
       def id: (.fullDatabaseId // .id | tostring);
-      def handled: id as $i | any($handled[]; . == $i) or any($seen[]; . == $i);
       def agent: (.body // "") | contains($mark);
-      def where($t): if $t.line == null then $t.path else "\($t.path):\($t.line)" end;
+      # The first words as written: quoted lines and emphasis do not count.
+      def lead: (.body // "") | gsub("\r"; "") | split("\n") | map(select(test("^\\s*>") | not)) | join("\n")
+                | sub("^[\\s*_]+"; "");
       .data.viewer.login as $me
-      | .data.repository.pullRequest as $p
+      | ([.data.repository.pullRequest.reviewThreads.nodes[].comments.nodes[], .data.repository.pullRequest.comments.nodes[]]
+         | map(select(.author.login == $me and (agent | not))) | length) as $mine
+      | def handled: id as $i | any($handled[]; . == $i) or any($seen[]; . == $i)
+                     or any($parked[]; .id == $i and .n == $mine);
+      def where($t): if $t.line == null then $t.path else "\($t.path):\($t.line)" end;
+      .data.repository.pullRequest as $p
       | [ $p.reviewThreads.nodes[] | . as $t | (.comments.nodes | sort_by(.createdAt)) as $cs
           | {t: $t, cs: $cs, root: $cs[0]} ] as $threads
-      | { valid: [ $threads[] | select(.root.author.login != $me) | . as $x
-                   | .cs[] | select(.author.login == $me and (agent | not) and (.body | test($valid; "i")) and (handled | not))
+      | { valid: [ $threads[] | select(.root.author.login != $me and (.t.isResolved | not)) | . as $x
+                   | .cs[] | select(.author.login == $me and (agent | not) and (lead | test($valid; "i")) and (handled | not))
                    | {thread: $x.t.id, id: id, url, where: where($x.t), pending: (.state == "PENDING"),
-                      instruction: (.body | sub($valid; ""; "i") | sub("^\\s+"; "")), asked: $x.root.body} ],
-          commands: ( [ $threads[] | . as $x
-                        | .cs[] | select(.author.login == $me and (agent | not) and (.body | test($prefix; "i")) and (handled | not))
+                      instruction: (lead | sub($valid; ""; "i") | sub("^\\s+"; "")), asked: $x.root.body} ],
+          commands: ( [ $threads[] | select(.t.isResolved | not) | . as $x
+                        | .cs[] | select(.author.login == $me and (agent | not) and (lead | test($prefix; "i")) and (handled | not))
                         | {thread: $x.t.id, id: id, url, where: where($x.t), pending: (.state == "PENDING"), body} ]
-                    + [ $p.comments.nodes[] | select(.author.login == $me and (agent | not) and (.body | test($prefix; "i")) and (handled | not))
+                    + [ $p.comments.nodes[] | select(.author.login == $me and (agent | not) and (lead | test($prefix; "i")) and (handled | not))
                         | {thread: null, id: id, url, where: null, pending: false, body} ] ),
           bots: [ $threads[] | . as $x
                   | select($x.root.author.__typename == "Bot" and any($bots[]; . == $x.root.author.login)
-                           and ($x.t.isResolved | not) and ($x.root | handled | not) and (any($x.cs[]; agent) | not))
+                           and ($x.t.isResolved | not) and ($x.root | handled | not)
+                           and (any($x.cs[]; agent or .author.login == $me) | not))
                   | {thread: .t.id, id: (.root | id), url: .root.url, where: where(.t), bot: .root.author.login,
                      body: .root.body, canResolve: .t.viewerCanResolve} ],
           waiting: [ $threads[] | select(.root.author.login != $me and .root.author.__typename != "Bot" and (.t.isResolved | not))
-                     | select(any(.cs[]; .author.login == $me and (.body | test($valid; "i"))) | not)
+                     | select(any(.cs[]; .author.login == $me and (lead | test($valid; "i"))) | not)
                      | {thread: .t.id, where: where(.t), reviewer: .root.author.login, url: .root.url,
                         last: (.cs | last | .body | .[0:200])} ],
           info: ( [ $p.reviews.nodes[] | select(.author.login != $me and ((.body // "") | length) > 0 and (handled | not))
@@ -104,7 +116,8 @@ case "$cmd" in
                 + [ $p.comments.nodes[] | select(.author.login != $me and (handled | not))
                     | {id: id, kind: "comment", author: .author.login, bot: (.author.__typename == "Bot"), url,
                        excerpt: (.body | .[0:300])} ] ),
-          pending: ([ $threads[].cs[] | select(.author.login == $me and .state == "PENDING" and (agent | not)) ] | length) }
+          pending: ([ $threads[].cs[] | select(.author.login == $me and .state == "PENDING" and (agent | not)) ] | length),
+          mine: $mine }
     ' <<<"$raw" ;;
 
   reply)
@@ -131,8 +144,10 @@ case "$cmd" in
     jq -e .bot <<<"$root" >/dev/null || die 7 "Only an allowlisted bot's thread is resolved; a person closes their own."
     jq -e .can <<<"$root" >/dev/null || die 7 "GitHub does not let you resolve $thread."
     id="$(jq -r .id <<<"$root")"
-    git -C "$WT" log --format='%(trailers:key=Addresses,valueonly)' HEAD | tr ', ' '\n\n' | grep -qx "$id" \
-      || die 7 "No commit addresses $id yet; fix it first."
+    remote="$(task_get "$KEY" ".units[$IDX].remote")"; branch="$(task_get "$KEY" ".units[$IDX].branch")"
+    { git -C "$WT" log --format='%(trailers:key=Addresses,valueonly)' "$remote/$branch" 2>/dev/null || true; } \
+      | tr ', ' '\n\n' | grep -x "$id" >/dev/null \
+      || die 7 "No pushed commit addresses $id yet; fix and push it first."
     gql 'mutation($t: ID!) { resolveReviewThread(input: {threadId: $t}) { thread { isResolved } } }' \
       "$(jq -n --arg t "$thread" '{t: $t}')" >/dev/null || exit 1
     printf 'resolved %s\n' "$thread" ;;

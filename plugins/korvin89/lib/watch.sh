@@ -22,8 +22,10 @@
 #                       quiet polls double the gap up to this; a pending WAIT
 #                       keeps the first gap
 #   WATCH_QUIET         60     the debounce for WAIT
-#   WATCH_TIMEOUT       7200   0 = never. Once this has passed, a successful poll
-#                       with nothing pending prints IDLE; a failed one never does
+#   WATCH_TIMEOUT       7200   empty = never. Once this has passed, a successful
+#                       poll with nothing pending prints IDLE; a failed one never does
+# A probe that runs gh in child processes exports GH_AUTH_FLAG (watch_loop sets
+# it to $GH_TMP/auth), so their auth failures reach the loop.
 #
 # Other lines it prints:
 #   AUTH <message>     gh is not authenticated: exit 1 at once
@@ -32,7 +34,7 @@
 WATCH_INTERVAL="${WATCH_INTERVAL:-20}"
 WATCH_MAX_INTERVAL="${WATCH_MAX_INTERVAL:-$WATCH_INTERVAL}"
 WATCH_QUIET="${WATCH_QUIET:-60}"
-WATCH_TIMEOUT="${WATCH_TIMEOUT:-7200}"
+WATCH_TIMEOUT="${WATCH_TIMEOUT-7200}"
 WATCH_PIDFILE=""
 
 watch_pid() {
@@ -47,6 +49,7 @@ watch_loop() {
   local probe="$1" start now gap line kind rest fp ev prev="" since=0 fails=0
   [ "$WATCH_MAX_INTERVAL" -ge "$WATCH_INTERVAL" ] || WATCH_MAX_INTERVAL="$WATCH_INTERVAL"
   start="$(date +%s)"; gap="$WATCH_INTERVAL"
+  export GH_AUTH_FLAG="$GH_TMP/auth"
   while :; do
     now="$(date +%s)"; kind=""
     if "$probe" > "$GH_TMP/probe.out" 2> "$GH_TMP/probe.err"; then
@@ -63,7 +66,7 @@ watch_loop() {
           gap="$WATCH_INTERVAL" ;;
         *)
           prev=""
-          if [ "$WATCH_TIMEOUT" -gt 0 ] && [ $((now - start)) -ge "$WATCH_TIMEOUT" ]; then
+          if [ -n "$WATCH_TIMEOUT" ] && [ $((now - start)) -ge "$WATCH_TIMEOUT" ]; then
             printf 'IDLE\n'; return 0
           fi ;;
       esac
