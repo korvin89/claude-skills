@@ -186,6 +186,102 @@ rubric is the base, project conventions add to and override it, and on a direct
 conflict the project layer wins. A line `comment-language: en` (or `ru`, or any
 language name) in that file sets the repo's default comment language.
 
+## `korvin89:task`
+
+The author-side companion to `code-review`: you are the **author** of the PR.
+It takes one of your tasks to a merged PR — plans it, implements it, reviews
+its own diff, opens a **draft** PR, and follows review comments and CI until
+the merge. You decide what changes: it only acts on your word. User-invoked
+only:
+
+```text
+/korvin89:task ABC-123              # a tracker task, read through the tracker skill your session has
+/korvin89:task 56                   # a GitHub issue (or a PR number: then it follows that PR of yours)
+/korvin89:task "cache the user list for 5 minutes"
+/korvin89:task                      # the tasks in flight; pick one to continue
+```
+
+Running it again with the same task continues where things stand: state comes
+from git and GitHub, not from the session.
+
+### The flow
+
+1. **Plan.** One PR by default, several only for a large task (no stacked
+   PRs). A read-only critic checks the plan, then you approve it — the one
+   point where it always waits for you.
+2. **Implement.** Each PR gets its own worktree next to the repository,
+   `<repo>.worktrees/<branch>`; your checkout is never switched or written.
+   Dependencies are installed from the lockfile; it asks once about env files.
+3. **Self-review.** Two independent read-only critics review the diff with
+   the `code-review` rubric; the agent fixes what they agree on.
+4. **Draft PR.** Pushed only after your repository's lint and tests pass, with
+   a title in the style of your merged PRs. Its description has the agent's
+   block between markers; your own text around it is never touched, and your
+   ticks in its checklist are kept. Moving the PR out of draft is yours.
+5. **Follow** (after `watch`): review comments, CI, conflicts, until the merge.
+   Then the worktree and branch are removed, and the next PR of the plan
+   starts.
+
+### What makes it change code
+
+Only three things:
+
+- your `valid` as the first word of a reply in a reviewer's thread (text
+  after it refines the fix: `valid, but keep the old name`);
+- your `ai:` command, in a thread or as a PR comment;
+- a Copilot review thread it agrees with (it argues the others in a draft
+  reply and leaves them to you).
+
+Everything else — review summaries, other people's comments, other bots — is
+reported to you and never acted on. Threads where a reviewer waits for your
+verdict are listed in `status`. Fixes carry an `Addresses: <comment id>`
+trailer, so nothing is fixed twice after a restart. When a reply to a reviewer
+is needed, it goes into **your pending review** as a draft for you to submit;
+nothing is published on your behalf. Only Copilot threads it fixed are
+resolved; a person's thread is theirs to close.
+
+### CI and conflicts
+
+- A failing check is classified from its log: a real failure gets fixed (at
+  most 3 fix commits per check, then it stops and asks); a flake is rerun (at
+  most twice); a broken base branch waits for the base to be fixed.
+- Skipped checks on a draft never count as green.
+- Checks that fail by design can be listed under `## Expected failing checks`
+  in `AGENTS.md` of the base branch.
+- Conflicts are resolved by merging the base in, only when mechanical;
+  otherwise it stops and names the files.
+- Never: force-push, rebasing pushed work, editing CI workflows or test
+  config, disabling tests, or writing to your tracker.
+
+### Session commands
+
+| Command | What it does |
+|---|---|
+| `watch` | start following review comments and CI (nothing polls GitHub until you say it) |
+| `sync` | handle what is there now, once |
+| `status` | the task at a glance: PRs, CI, triggers, threads waiting for you, manual steps |
+| `pause` | stop following and lift the edit guard, e.g. to work in your own checkout |
+| `stop` | stop following; nothing is deleted |
+
+### Guard rails
+
+While a task is active, a hook in the skill blocks:
+- edits outside the task's worktrees;
+- raw `git push`;
+- history rewrites;
+- `gh pr ready` / `merge`;
+- GitHub writes outside the task's scripts.
+
+`pause` lifts it. For a background run, allow the task scripts in
+`~/.claude/settings.json`; the skill's own grant lasts only one turn:
+
+```json
+{ "permissions": { "allow": ["Bash(bash *skills/task/scripts/*)"] } }
+```
+
+Requires `gh` and `jq` 1.6+. `/korvin89:cleanup task-<key>` removes an
+abandoned task: its worktrees, and its branches only when they are pushed.
+
 ## `korvin89:cleanup`
 
 Removes what the review skills keep for one pull request:
@@ -196,6 +292,7 @@ only, and only for the review you name:
 ```text
 /korvin89:cleanup 1234     # the scratch of PR #1234 (also #1234, pr-1234 or the PR URL)
 /korvin89:cleanup local    # the scratch of a review without a PR, in this checkout
+/korvin89:cleanup task-<key>   # an abandoned task: its worktrees, and its branches when pushed
 /korvin89:cleanup          # lists what exists; removes nothing
 ```
 
