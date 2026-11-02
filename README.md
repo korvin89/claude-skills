@@ -128,3 +128,5 @@ per run (command, story or fixture, viewport, theme), renders each pair in
 separate `git worktree`s so your checkout is untouched, and assembles the page
 with `scripts/build-page.sh` from a `manifest.json`. Requires `jq`; the
 Artifact tool needs a claude.ai login (CLI or desktop app).
+
+Sandbox line for the code-review smoke test.
