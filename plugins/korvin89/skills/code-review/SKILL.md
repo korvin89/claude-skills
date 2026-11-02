@@ -20,7 +20,6 @@ Files bundled with this plugin:
 
 - `${CLAUDE_SKILL_DIR}/references/rubric.md` — passes, frontend layer,
   severity + confidence, the finding format. Read before pass 1.
-- `${CLAUDE_SKILL_DIR}/references/legend.md` — the top-level review comment.
 - `${CLAUDE_SKILL_DIR}/scripts/collect-diff.sh` — collects the diff (Step 1).
 - `${CLAUDE_SKILL_DIR}/scripts/post-review.sh` — posts the batch (Step 9).
 - `${CLAUDE_PLUGIN_ROOT}/skills/review-artifacts/SKILL.md` — screenshot pairs
@@ -38,10 +37,10 @@ Files bundled with this plugin:
   neither praised nor graded; a finding states the problem, why it matters, and
   the fix.
 - **Severity tags** are `🔴 blocker` · `🟠 should-fix` · `🔵 nit` · `❓ question`:
-  emoji, then the English term, unchanged in the dump, the legend, and posted
-  comments, whatever the comment language.
-- **`🤖 **AI generated**`** opens every posted text: each inline comment and the
-  review body. `post-review.sh` prepends it when missing; write it anyway.
+  emoji, then the English term, unchanged in the dump and in posted comments,
+  whatever the comment language.
+- **`🤖 **AI generated**`** opens every posted comment. `post-review.sh`
+  prepends it when missing; write it anyway. There is no top-level legend.
 - **Posting** happens only with `--post`, only in PR mode, only after the
   reviewer confirms the final batch at Stop 3. Otherwise the batch is printed.
 
@@ -161,11 +160,10 @@ Ask in Russian for a free-text reply, for example:
 > Ответь, какие пункты идут в финальный батч: номера через запятую (или «все»).
 > К любому пункту можешь добавить детали — например «4: добавь, что это ломает и
 > мобилку». «4: +артефакты» — соберу скриншоты main/PR и конфиги на отдельную
-> страницу и подошью ссылку. Что не выбрано — не постим. Легенду (дисклеймер +
-> теги) добавляем? По умолчанию да.
+> страницу и подошью ссылку. Что не выбрано — не постим.
 
-Keep only the selected numbers and apply any per-item edits. The legend
-(`references/legend.md`) is included unless declined. Wait for the answer.
+Keep only the selected numbers and apply any per-item edits. Wait for the
+answer.
 
 **Artifacts.** For every finding marked `+артефакты`, read
 `${CLAUDE_PLUGIN_ROOT}/skills/review-artifacts/SKILL.md` and follow it with
@@ -179,8 +177,7 @@ Render the batch exactly as it would be posted:
 
 - prose in the comment language, style per the invariants;
 - severity tags per the invariants; confidence and `✓✓` removed;
-- each item and the legend opened with `🤖 **AI generated**`;
-- the legend per `legend.md`, unless declined at Stop 2.
+- each item opened with `🤖 **AI generated**`.
 
 Then ask in Russian: всё ок и постим — или ещё почитать и погрумить? Grooming
 loops back to Step 7. Proceed only on confirmation.
@@ -191,7 +188,7 @@ Write the batch to a JSON file and post it as **one PR review**:
 
 ```json
 {
-  "body": "<legend, or empty when declined>",
+  "body": "",
   "unattached_heading": "<heading for findings that are not on a diff line, in the comment language>",
   "comments": [
     { "path": "src/x.ts", "line": 42, "body": "🤖 **AI generated**\n\n🔴 **blocker** — …" }

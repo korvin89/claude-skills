@@ -72,16 +72,15 @@ PR" or "review my changes".
 1. **Config** — one prompt with the three questions above.
 2. **Curation** — every finding is dumped in Russian, numbered, with a
    severity (🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` / ❓ `question`) and a
-   confidence. You reply with the numbers to keep and optional per-item edits,
-   and whether to include the fixed legend comment (on by default). `4: +артефакты`
-   attaches an artifact page (screenshot pairs main vs PR plus configs) to that
+   confidence. You reply with the numbers to keep and optional per-item edits.
+   `4: +артефакты` attaches an artifact page (screenshot pairs main vs PR plus configs) to that
    finding; see `korvin89:review-artifacts`.
 3. **Confirm or groom** — the final batch is rendered as it will be posted, in
    your chosen language. Grooming loops back to curation.
 
 With `--post`, the confirmed batch is posted as **one PR review**: inline
-comments on diff lines plus the legend as the review body. Every posted text
-starts with `🤖 AI generated`. Findings on lines outside the diff are listed in
+comments on diff lines, no top-level legend. Every posted comment starts with
+`🤖 AI generated`. Findings on lines outside the diff are listed in
 the review body with their `path:line`. Posting requires `gh` and `jq`.
 
 ### Per-repo conventions layer (not shipped here)

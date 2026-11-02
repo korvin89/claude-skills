@@ -8,7 +8,7 @@
 #
 # batch.json:
 #   {
-#     "body": "top-level text (the legend); may be empty",
+#     "body": "top-level text; may be empty",
 #     "unattached_heading": "heading for findings that are not on a diff line (optional)",
 #     "comments": [
 #       { "path": "src/x.ts", "line": 42, "body": "🔴 **blocker** — …" }
