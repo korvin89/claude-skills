@@ -1,14 +1,14 @@
 ---
 name: code-review
 description: >-
-  Curation-first code review of a pull request, the current branch, or the
-  working tree: collects the diff, reads full file context, reviews in ordered
+  Curation-first code review of a pull request or of local changes: collects
+  the diff, reads full file context, reviews in ordered
   passes with severity and confidence, optionally adds an independent second
   pass. On a PR the findings go into the reviewer's GitHub draft review, where
   the reviewer curates them with `ai:` comments and submits it themselves. Use
   when asked to review a PR, review changes or a diff, or check code before
   merge.
-argument-hint: "[pr-number | pr-url] [--quick] [--branch]"
+argument-hint: "[pr-number | pr-url] [--quick]"
 allowed-tools: Read, Grep, Glob, Bash, Agent, AskUserQuestion, Artifact
 ---
 
@@ -64,9 +64,8 @@ them `cmd`.
 
 | Argument | Effect |
 |---|---|
-| `<number>` / `#<number>` / `<pr-url>` | PR mode (needs `gh`): findings go into the reviewer's draft (Steps 7–8). Omitted → working tree if dirty, else current branch. |
+| `<number>` / `#<number>` / `<pr-url>` | PR mode (needs `gh`): findings go into the reviewer's draft (Steps 7–8). Omitted → local mode: everything not yet in `origin/<default>` — the branch's commits, uncommitted changes and untracked files. |
 | `--quick` | Single pass, dump the findings, stop: no prompts, no second pass, no draft. |
-| `--branch` | Force branch mode even when the working tree is dirty. |
 
 When you cannot ask the reviewer (headless run), say so in one Russian line and
 behave as `--quick`.
@@ -87,6 +86,12 @@ and every comment already on the PR. Its exit codes:
   > Install it: https://cli.github.com/
 - `4` / `5` — bad argument / nothing to review. Relay the script's message in
   Russian and stop.
+
+In PR mode, `### WORKTREE:` is a checkout of the PR head made for this review.
+For the whole run — passes, second pass, draft loop — read and grep the PR's
+files there, never in the current checkout: it may be on another branch. When a
+`### NOTE:` says the head could not be checked out, review from the diff alone
+and say so in one Russian line.
 
 ## Step 2 — Configuration (one prompt)
 
@@ -110,7 +115,8 @@ Restate the resolved values in one Russian line and continue.
 
 A hunk is not enough to judge a change.
 
-- **Read every changed file in full** (`Read`), and every path under
+- **Read every changed file in full** (`Read`; in PR mode under
+  `### WORKTREE:`), and every path under
   `### UNTRACKED FILES`. Apply the noise rules from the rubric.
 - **Follow the change outward:** `Grep` / `Glob` for callers of changed
   functions, the types involved, sibling modules, existing tests.
@@ -147,7 +153,7 @@ An independent opinion, unanchored by pass 1. Spawn one sub-agent with the
 - the absolute paths of `rubric.md` and of the conventions layer (if any) — it
   reads them itself;
 - the exact collector command from Step 1 — it runs it itself and reads the
-  changed files in full;
+  changed files in full — and, in PR mode, the worktree path to read them in;
 - the intent statement and the focus areas (as elevated priorities to
   scrutinize, not as findings to confirm);
 - the return format: the rubric's finding format, numbered, in Russian.
@@ -172,7 +178,8 @@ and the fix. Uncertainty is expressed through `question` and the confidence
 axis, not through softened wording. When a real review found nothing worth
 raising, say so in one line.
 
-Under `--quick`, or outside PR mode, stop here.
+Under `--quick`, or outside PR mode, stop here (a `--quick` PR run removes its
+worktree first — see *Cleanup*).
 
 ## Step 7 — Into the draft (PR mode)
 
@@ -230,8 +237,9 @@ may write in the session meanwhile; answer as usual, the watcher keeps running.
 | Watcher line | Then |
 |---|---|
 | `ACTIONABLE <n>` | run a pass (below), then arm the watcher again |
-| `SUBMITTED <url>` | one Russian line with the link; the loop ends |
-| `DISCARDED` | one line: the draft was discarded; the loop ends |
+| `SUBMITTED <url>` | one Russian line with the link; clean up; the loop ends |
+| `DISCARDED` | one line: the draft was discarded; clean up; the loop ends |
+| `AUTH …` | one line: `gh` is not logged in, `gh auth login` then «синк»; the loop ends |
 | `IDLE` | one line: two hours without commands, «синк» resumes; the loop ends |
 | `ERROR …` | relay it in one line, «синк» resumes; the loop ends |
 
@@ -293,4 +301,14 @@ which.
 **In the session** the reviewer can also say: «синк» · `sync` — run a pass
 now; a request across the whole draft («убери все nit» · `drop all nits`,
 «переведи всё на en» · `translate all to en`) — apply it to every `ai` finding
-and report; «стоп» · `stop` — stop the watcher and end the loop.
+and report; «стоп» · `stop` — stop the watcher, clean up, and end the loop.
+
+**Cleanup.** When the run ends for good — `SUBMITTED`, `DISCARDED`, «стоп», or
+the end of a `--quick` PR run — remove the review worktree, a scratch checkout
+that holds nothing of the reviewer's:
+
+```
+git worktree remove --force <path from ### WORKTREE:>
+```
+
+After `IDLE`, `AUTH` or `ERROR` keep it: «синк» resumes the loop.

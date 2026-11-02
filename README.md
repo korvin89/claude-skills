@@ -47,17 +47,21 @@ in [references/rubric.md](plugins/korvin89/skills/code-review/references/rubric.
 ### Usage
 
 ```text
-/korvin89:code-review                 # review the working tree if dirty, else the current branch
+/korvin89:code-review                 # review your local changes: everything not yet in origin/<default>
 /korvin89:code-review 1234            # review PR #1234 into your draft review (needs gh and jq)
 /korvin89:code-review --quick         # single pass, dump findings, no questions, no draft
-/korvin89:code-review --branch        # force branch mode even with a dirty tree
 ```
 
 | Argument | What it does |
 |---|---|
-| `[pr-number \| #number \| pr-url]` | Review that PR; findings go into your draft review. Omit it → auto-detect: working tree if dirty, otherwise the current branch against `origin/<default>`. |
+| `[pr-number \| #number \| pr-url]` | Review that PR; findings go into your draft review. Omit it → your local changes: the branch's commits since `origin/<default>`, uncommitted changes and untracked files. |
 | `--quick` | Skip the interactive flow: single pass, dump the findings, stop. |
-| `--branch` | Force branch mode even when the working tree is dirty. |
+
+On a PR the skill reads the code at the PR's head, not in your checkout: it
+fetches the head from the git remote that points at the PR's repository into a
+scratch worktree inside `.git/code-review/`, and removes it when the run ends.
+Your checkout and branch stay as they are; run the skill from a clone of the
+PR's repository.
 
 Everything else is asked in one prompt before the review: whether to run the
 second pass, the comment language, and any focus areas to scrutinize.
@@ -97,6 +101,19 @@ handles them in one pass, and removes your commands and its own `🤖💬` repli
 when a thread is resolved, so the draft stays ready to submit. A thread where
 the agent asked a question stays until you answer. Watching ends by itself when
 you submit or discard the draft, or after two hours without commands.
+
+**Leaving the session in the background.** The skill's own tool grant lasts
+only for the turn you start it in. Later `draft.sh` calls may stop at a
+permission prompt that nobody sees, and the loop then waits. To avoid that,
+allow the script in `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["Bash(bash *code-review/scripts/draft.sh*)"] } }
+```
+
+The wildcards match any command that runs a path ending in
+`code-review/scripts/draft.sh`; add the rule only if that is acceptable to you,
+otherwise answer the prompts when the session shows them.
 
 Commands are free text in Russian or English; these are the usual ones. In a
 🤖 thread no prefix is needed; elsewhere start with `ai:`.
