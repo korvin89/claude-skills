@@ -68,8 +68,10 @@
 # still SUBMITTED. While watch runs, <git-common-dir>/code-review/pr-<N>/watch.pid
 # holds its pid.
 #
-# Every GitHub call is cut after DRAFT_CALL_DEADLINE seconds (default 30), so a
-# hung network call fails like any other instead of stalling the watcher.
+# The GitHub plumbing, the pending-review calls and the polling loop come from
+# ../../../lib (gh.sh, pending.sh, watch.sh). Every GitHub call is cut after
+# GH_CALL_DEADLINE seconds (default 30), so a hung network call fails like any
+# other instead of stalling the watcher.
 #
 # Requires: gh (authenticated) and jq 1.6+.
 # Exit codes: 0 ok · 1 GitHub error · 3 gh missing · 4 bad usage · 5 nothing to add
@@ -80,79 +82,28 @@ set -euo pipefail
 MARKER='🤖 **AI generated**'
 CHAT='🤖💬'
 PREFIX='^(ai|ии|фш|bb)[:;жЖ^%]'
-GH_DOCS="https://cli.github.com/"
-JQ_DOCS="https://jqlang.github.io/jq/download/"
-err() { printf '%s\n' "$*" >&2; }
-die() { local code="$1"; shift; err "$*"; exit "$code"; }
-usage() { die 4 "Usage: draft.sh add|state|reply|edit|delete|watch <pr> … (see the header of this script)"; }
+LIB="$(CDPATH='' cd -P -- "$(dirname "$0")/../../../lib" && pwd)"
+. "$LIB/gh.sh"; . "$LIB/pending.sh"; . "$LIB/watch.sh"
+usage() { die 4 "Usage: draft.sh add|state|reply|edit|delete|validate|watch <pr> … (see the header of this script)"; }
 
 [ $# -ge 2 ] || usage
 cmd="$1"; pr="${2#\#}"; shift 2
 case "$cmd" in add|state|reply|edit|delete|validate|watch) ;; *) usage ;; esac
 
-command -v gh >/dev/null 2>&1 || {
-  err "GitHub CLI (gh) is required to work with a pull request but was not found."
-  err "Install it: $GH_DOCS"
-  exit 3
-}
-command -v jq >/dev/null 2>&1 || {
-  err "jq is required to work with the draft but was not found."
-  err "Install it: $JQ_DOCS"
-  exit 6
-}
-case "$(jq --version 2>/dev/null)" in
-  jq-1.[0-5]|jq-1.[0-5][!0-9]*) die 6 "jq 1.6 or newer is required, found $(jq --version). Update it: $JQ_DOCS" ;;
-esac
+gh_require
+gh_tmp_init
+trap 'rm -rf "$GH_TMP"; watch_release' EXIT
 
-tmp="$(mktemp -d)"
-pidfile=""
-trap 'rm -rf "$tmp"; [ -z "$pidfile" ] || [ "$(cat "$pidfile" 2>/dev/null)" != "$$" ] || rm -f "$pidfile"' EXIT
-CALL_DEADLINE="${DRAFT_CALL_DEADLINE:-30}"
-
-# deadline <cmd…> — run cmd, TERM it after $CALL_DEADLINE seconds; 124 on timeout.
-deadline() {
-  local pid dog rc=0
-  "$@" & pid=$!
-  ( sleep "$CALL_DEADLINE" && kill -TERM "$pid" 2>/dev/null ) >/dev/null 2>&1 & dog=$!
-  wait "$pid" || rc=$?
-  if kill -0 "$dog" 2>/dev/null; then
-    pkill -P "$dog" 2>/dev/null || true
-    kill "$dog" 2>/dev/null || true
-  elif [ "$rc" -ne 0 ]; then
-    rc=124
-  fi
-  wait "$dog" 2>/dev/null || true
-  return "$rc"
-}
-
-# gh_call <out-file> <gh args…> — gh under the deadline, stderr kept in
-# $tmp/gh.err; a failure is reported on stderr, an auth failure also leaves
-# $tmp/auth behind.
-gh_call() {
-  local out="$1" rc=0; shift
-  deadline gh "$@" > "$out" 2> "$tmp/gh.err" || rc=$?
-  [ "$rc" -eq 0 ] && return 0
-  if [ "$rc" -eq 124 ]; then
-    err "GitHub API error: no answer in ${CALL_DEADLINE}s"
-  else
-    grep -q -e 'HTTP 401' -e 'gh auth login' "$tmp/gh.err" && : > "$tmp/auth"
-    err "GitHub API error: $(tail -n 1 "$tmp/gh.err")"
-  fi
-  return 1
-}
-
-if ! gh_call "$tmp/url" pr view "$pr" --json url --jq .url 2>"$tmp/start.err"; then
-  cat "$tmp/start.err" >&2
+if ! gh_pr "$pr" 2>"$GH_TMP/start.err"; then
+  cat "$GH_TMP/start.err" >&2
   # watch always answers with one line, even when it cannot start.
   if [ "$cmd" = watch ]; then
-    if [ -f "$tmp/auth" ]; then printf 'AUTH %s\n' "$(tail -n 1 "$tmp/start.err")"
-    else printf 'ERROR %s\n' "$(tail -n 1 "$tmp/start.err")"; fi
+    if [ -f "$GH_TMP/auth" ]; then printf 'AUTH %s\n' "$(tail -n 1 "$GH_TMP/start.err")"
+    else printf 'ERROR %s\n' "$(tail -n 1 "$GH_TMP/start.err")"; fi
   fi
   exit 1
 fi
-url="$(cat "$tmp/url")"
-rest="${url#*://}"; host="${rest%%/*}"; rest="${rest#*/}"
-owner="${rest%%/*}"; rest="${rest#*/}"; repo="${rest%%/*}"; num="${url##*/}"
+url="$PR_URL"; host="$PR_HOST"; owner="$PR_OWNER"; repo="$PR_REPO"; num="$PR_NUM"
 
 # ------------------------------------------------------------- GraphQL ----
 STATE_QUERY='query($owner: String!, $repo: String!, $num: Int!) {
@@ -171,28 +122,6 @@ STATE_QUERY='query($owner: String!, $repo: String!, $num: Int!) {
     }
   }
 }'
-CREATE_REVIEW='mutation($pr: ID!) {
-  addPullRequestReview(input: {pullRequestId: $pr}) { pullRequestReview { id } }
-}'
-ADD_LINE='mutation($review: ID!, $path: String!, $line: Int!, $body: String!) {
-  addPullRequestReviewThread(input: {pullRequestReviewId: $review, path: $path, line: $line,
-    side: RIGHT, subjectType: LINE, body: $body}) { thread { id } }
-}'
-ADD_FILE='mutation($review: ID!, $path: String!, $body: String!) {
-  addPullRequestReviewThread(input: {pullRequestReviewId: $review, path: $path,
-    subjectType: FILE, body: $body}) { thread { id } }
-}'
-REPLY='mutation($review: ID!, $thread: ID!, $body: String!) {
-  addPullRequestReviewThreadReply(input: {pullRequestReviewId: $review,
-    pullRequestReviewThreadId: $thread, body: $body}) { comment { id } }
-}'
-EDIT='mutation($id: ID!, $body: String!) {
-  updatePullRequestReviewComment(input: {pullRequestReviewCommentId: $id, body: $body}) {
-    pullRequestReviewComment { id }
-  }
-}'
-DELETE='mutation($id: ID!) { deletePullRequestReviewComment(input: {id: $id}) { clientMutationId } }'
-
 # Raw response → the draft: threads that hold at least one draft comment, each
 # comment classified (see the header), plus counts.
 NORMALIZE='
@@ -233,13 +162,6 @@ def lead: sub("^\\s+"; "");
               else null end)
 '
 
-# gql <query> <variables-json> — print the response; fail on any GraphQL error.
-gql() {
-  jq -n --arg q "$1" --argjson v "$2" '{query: $q, variables: $v}' > "$tmp/req.json"
-  gh_call "$tmp/resp.json" api graphql --hostname "$host" --method POST --input "$tmp/req.json" || return 1
-  cat "$tmp/resp.json"
-}
-
 fetch_state() {
   local raw
   raw="$(gql "$STATE_QUERY" "$(jq -n --arg o "$owner" --arg r "$repo" --argjson n "$num" \
@@ -273,11 +195,11 @@ cmd_add() {
 
   # The PR's files with their patches; every new-side line inside a hunk
   # (added or context) accepts a line comment.
-  gh_call "$tmp/files.ndjson" api --hostname "$host" "repos/$owner/$repo/pulls/$num/files?per_page=100" \
+  gh_call "$GH_TMP/files.ndjson" api --hostname "$host" "repos/$owner/$repo/pulls/$num/files?per_page=100" \
     --paginate --jq '.[] | {filename, patch}' || exit 1
 
   local plan
-  plan="$(jq -c --arg marker "$MARKER" --slurpfile files "$tmp/files.ndjson" '
+  plan="$(jq -c --arg marker "$MARKER" --slurpfile files "$GH_TMP/files.ndjson" '
     def newlines:
       if .patch == null then []
       else reduce (.patch | split("\n"))[] as $l ({n: 0, out: []};
@@ -321,20 +243,19 @@ cmd_add() {
   if [ -n "$review" ]; then
     how="joined the existing draft"
   else
-    review="$(gql "$CREATE_REVIEW" "$(jq -c '{pr: .pr_id}' <<<"$state")" \
-      | jq -r '.data.addPullRequestReview.pullRequestReview.id')" || exit 1
+    review="$(pending_open)" || exit 1
     how="started a new draft"
   fi
 
-  local item to where vars q added=0 files=0 skipped=0 failed=0
+  local item to where path ok added=0 files=0 skipped=0 failed=0
   while IFS= read -r item; do
-    to="$(jq -r .to <<<"$item")"; where="$(jq -r .where <<<"$item")"
+    to="$(jq -r .to <<<"$item")"; where="$(jq -r .where <<<"$item")"; path="$(jq -r .path <<<"$item")"
     case "$to" in
-      line) q="$ADD_LINE"; vars="$(jq -c --arg r "$review" '{review: $r, path, line, body}' <<<"$item")" ;;
-      file) q="$ADD_FILE"; vars="$(jq -c --arg r "$review" '{review: $r, path, body}' <<<"$item")" ;;
+      line) ok="$(pending_thread_line "$review" "$path" "$(jq -r .line <<<"$item")" "$(jq -r .body <<<"$item")")" || ok="" ;;
+      file) ok="$(pending_thread_file "$review" "$path" "$(jq -r .body <<<"$item")")" || ok="" ;;
       *)    printf 'skipped  %s — file is not in the PR diff\n' "$where"; skipped=$((skipped + 1)); continue ;;
     esac
-    if gql "$q" "$vars" >/dev/null; then
+    if [ -n "$ok" ]; then
       added=$((added + 1))
       if [ "$to" = file ]; then files=$((files + 1)); printf 'added    %s (file-level)\n' "$where"
       else printf 'added    %s\n' "$where"; fi
@@ -359,8 +280,7 @@ cmd_reply() {
   [ -n "$review" ] || die 7 "There is no draft on $url; reply refused."
   jq -e --arg t "$thread" 'any(.threads[]; .id == $t)' <<<"$state" >/dev/null \
     || die 7 "Thread $thread holds no draft comments; reply refused."
-  gql "$REPLY" "$(jq -n --arg r "$review" --arg t "$thread" --arg b "$body" \
-    '{review: $r, thread: $t, body: $b}')" >/dev/null || exit 1
+  pending_reply "$review" "$thread" "$body" >/dev/null || exit 1
   printf 'replied  %s\n' "$thread"
 }
 
@@ -379,7 +299,7 @@ cmd_edit() {
     ai)  case "$body" in "$MARKER"*) ;; *) body="$MARKER"$'\n\n'"$body" ;; esac ;;
     bot) case "$body" in "$CHAT"*) ;; *) body="$CHAT $body" ;; esac ;;
   esac
-  gql "$EDIT" "$(jq -n --arg id "$id" --arg b "$body" '{id: $id, body: $b}')" >/dev/null || exit 1
+  pending_edit "$id" "$body" >/dev/null || exit 1
   printf 'edited   %s (%s)\n' "$id" "$kind"
 }
 
@@ -398,7 +318,7 @@ cmd_delete() {
   [ -z "$refused" ] || die 7 "Delete refused, nothing deleted: $refused."
   # Newest first, so a thread root goes after its replies.
   for id in $(jq -r 'sort_by(.created) | reverse | .[].id' <<<"$picked"); do
-    gql "$DELETE" "$(jq -n --arg id "$id" '{id: $id}')" >/dev/null || exit 1
+    pending_delete "$id" >/dev/null || exit 1
     printf 'deleted  %s\n' "$id"
   done
 }
@@ -425,70 +345,46 @@ cmd_validate() {
 }
 
 # --------------------------------------------------------------- watch ----
+# The draft probe for watch_loop: SUBMITTED / DISCARDED at once, ACTIONABLE once
+# the pending commands stop changing. $seen remembers the draft between polls.
+seen=""
+draft_probe() {
+  local s review fp
+  s="$(fetch_state)" || return 1
+  review="$(jq -r '.review // empty' <<<"$s")"
+  if [ -n "$review" ]; then
+    seen="$review"
+  elif [ -n "$seen" ]; then
+    if jq -e --arg id "$seen" '.latest.id == $id and .latest.state != "PENDING"' <<<"$s" >/dev/null; then
+      printf 'NOW\tSUBMITTED %s\n' "$(jq -r '.latest.url // ""' <<<"$s")"
+    else
+      printf 'NOW\tDISCARDED\n'
+    fi
+    return 0
+  fi
+  fp="$(jq -c '[.threads[] | select(.actionable) | .comments[] | select(.kind == "cmd") | [.id, .updated]]' <<<"$s")"
+  [ "$fp" = "[]" ] || printf 'WAIT\t%s\tACTIONABLE %s\n' "$fp" "$(jq '.counts.actionable' <<<"$s")"
+}
+
 cmd_watch() {
-  local interval=20 quiet=60 timeout=7200 seen=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --review)   seen="${2:-}"; [ -n "$seen" ] || die 4 "--review needs a review id."; shift 2; continue ;;
-      --interval) interval="${2:-}" ;;
-      --quiet)    quiet="${2:-}" ;;
-      --timeout)  timeout="${2:-}" ;;
+      --interval) WATCH_INTERVAL="${2:-}"; WATCH_MAX_INTERVAL="${2:-}" ;;
+      --quiet)    WATCH_QUIET="${2:-}" ;;
+      --timeout)  WATCH_TIMEOUT="${2:-}" ;;
       *)          die 4 "Unknown argument: $1" ;;
     esac
     case "${2:-}" in ''|*[!0-9]*) die 4 "$1 needs a whole number of seconds." ;; esac
     shift 2
   done
-
   # Mark the review's scratch as in use while watching: cleanup.sh warns
-  # before removing it (see cleanup/scripts/cleanup.sh for the layout). Only an
-  # existing scratch is marked; the watcher never creates one.
+  # before removing it (see cleanup/scripts/cleanup.sh for the layout).
   local common
   if common="$(git rev-parse --git-common-dir 2>/dev/null)"; then
-    pidfile="$(CDPATH='' cd -P -- "$common" && pwd -P)/code-review/pr-$num/watch.pid"
-    if [ -d "${pidfile%/*}" ]; then printf '%s\n' "$$" > "$pidfile"; else pidfile=""; fi
+    watch_pid "$(CDPATH='' cd -P -- "$common" && pwd -P)/code-review/pr-$num/watch.pid"
   fi
-
-  local start now s review fp prev="" since=0 fails=0
-  start="$(date +%s)"
-  while :; do
-    now="$(date +%s)"
-    if s="$(fetch_state 2>"$tmp/watch.err")"; then
-      fails=0
-      review="$(jq -r '.review // empty' <<<"$s")"
-      if [ -n "$review" ]; then
-        seen="$review"
-      elif [ -n "$seen" ]; then
-        if jq -e --arg id "$seen" '.latest.id == $id and .latest.state != "PENDING"' <<<"$s" >/dev/null; then
-          printf 'SUBMITTED %s\n' "$(jq -r '.latest.url // ""' <<<"$s")"
-        else
-          printf 'DISCARDED\n'
-        fi
-        return 0
-      fi
-      # Debounce: fire once the pending commands stop changing.
-      fp="$(jq -c '[.threads[] | select(.actionable) | .comments[] | select(.kind == "cmd") | [.id, .updated]]' <<<"$s")"
-      if [ "$fp" != "$prev" ]; then prev="$fp"; since="$now"; fi
-      if [ "$fp" != "[]" ] && [ $((now - since)) -ge "$quiet" ]; then
-        printf 'ACTIONABLE %s\n' "$(jq '.counts.actionable' <<<"$s")"
-        return 0
-      fi
-      # Idle only on what a poll has just seen: never on a failed one.
-      if [ "$fp" = "[]" ] && [ $((now - start)) -ge "$timeout" ]; then
-        printf 'IDLE\n'; return 0
-      fi
-    else
-      if [ -f "$tmp/auth" ]; then
-        printf 'AUTH %s\n' "$(tail -n 1 "$tmp/watch.err")"
-        return 1
-      fi
-      fails=$((fails + 1))
-      if [ "$fails" -ge 5 ]; then
-        printf 'ERROR %s\n' "$(tail -n 1 "$tmp/watch.err")"
-        return 1
-      fi
-    fi
-    sleep "$interval"
-  done
+  watch_loop draft_probe
 }
 
 case "$cmd" in
