@@ -63,9 +63,9 @@ worktree in the review's scratch dir, `.git/code-review/pr-<N>/`. Your checkout
 and branch stay as they are; run the skill from a clone of the PR's repository.
 Everything else the review needs (the findings batch, artifact screenshots)
 goes into the same dir, never into `/tmp`. The dir is removed when the PR run
-ends (Submit, a discarded draft, «стоп», the end of `--quick`). It is kept when
-watching stops on its own (two idle hours, an auth or network error), so
-«синк» can resume, and kept when cleanup's checks find something. Every run
+ends (Submit, a discarded draft, «стоп», the end of `--quick`). It is kept on «пауза»
+and when watching stops on its own (two idle hours, an auth or network error),
+so «следи» can resume, and kept when cleanup's checks find something. Every run
 lists the other reviews' dirs; `korvin89:cleanup` removes them.
 
 Everything else is asked in one prompt before the review: whether to run the
@@ -87,45 +87,83 @@ PR" or "review my changes".
    the session for your summary.
 4. **Loop** — once you say «следи» in the session, it watches the draft in the
    background and edits it on your commands until you press **Submit** in
-   GitHub. Until then nothing polls GitHub, so the draft can wait for you.
+   GitHub; see *Working with the draft*.
 
-### Talking to the agent in the draft
+### Working with the draft
+
+A typical PR run:
+
+1. `/korvin89:code-review 1234` — answer the config prompt; the findings land
+   in your draft review and the session waits.
+2. Open the PR's changes in GitHub when you have time, and say «следи» in the
+   session: from now on the agent reacts to your commands in the draft.
+3. Curate in the draft: delete, rephrase, ask, add your own comments, ask the
+   agent to write them up.
+4. Say «проверь драфт» before submitting, so nothing meant for the agent gets
+   published.
+5. Press **Submit review** in GitHub. A watching session notices, cleans up
+   its scratch, and the run ends; if it was not watching, say «стоп» there, or
+   run `/korvin89:cleanup 1234` later.
+
+Commands go to two places: **in the draft** for one finding or one line, **in
+the session** for the watcher and the whole draft. Both take Russian or English
+free text; the tables list the usual forms.
+
+#### In the draft: one finding or one line
 
 Everything in the draft is under your account, so the agent goes by these
 rules:
 
-- a reply in a thread that starts with a 🤖 finding is addressed to the agent,
-  and so is any reply after the agent's own `🤖💬` reply in a thread, until the
-  agent closes that discussion;
-- anywhere else, a comment starting with `ai:` is addressed to the agent: under
-  your own comment («ai: оформи», «ai: короче, на en») or as a new comment on a
-  line («ai: тут гонка с refetch?»). `ии:` works too, and so do both typed in
-  the other keyboard layout: `фш:`, `bb:`, `фшЖ`;
+- a reply in a thread that starts with a 🤖 finding is addressed to the agent;
+- after the agent's own `🤖💬` reply in a thread, your replies there are
+  addressed to it too, until that discussion is closed;
+- anywhere else, start the comment with `ai:` — under your own comment, or as a
+  new comment on a line. `ии:` works too, and so do both typed in the other
+  keyboard layout: `фш:`, `bb:`, `фшЖ`;
 - every other comment of yours is your review; the agent never edits or deletes
   it on its own.
 
-While it watches, the agent picks up commands once you have been quiet for
-about a minute, handles them in one pass, and removes your commands and its
-own `🤖💬` replies when a thread is resolved, so the draft stays ready to
-submit. A thread where the agent asked a question stays until you answer.
-Watching ends by itself when you submit or discard the draft, or after two
-hours without commands.
+| Russian | English | What the agent does |
+|---|---|---|
+| `удали` | `delete` | deletes the 🤖 thread |
+| `короче`, `мягче`, `переформулируй: …` | `shorter`, `softer`, `rephrase: …` | rewrites the comment |
+| `en` / `ru` | `en` / `ru` | translates the comment |
+| `nit`, `should-fix`, `blocker`, `question` | same | changes the severity tag |
+| `предложи фикс` | `suggest fix` | adds a GitHub suggestion block for the commented line |
+| `где ещё?` | `where else?` | lists other places with the same problem |
+| `артефакты` | `artifacts` | attaches a screenshot page (see `korvin89:review-artifacts`) |
+| `объедини с <ссылка \| path:line>` | `merge with <link \| path:line>` | folds those threads into this one; a file name and a line are enough |
+| `почему?` | `why?` | answers in the thread with `🤖💬` |
+| `ок`, `оставь` | `ok`, `keep` | after the agent's `🤖💬`: closes the discussion, keeps the finding |
+| `ai: оформи` | `ai: write up` | under your own comment: turns your note into a finding (gets the 🤖 marker) |
+| `ai: <гипотеза>` | `ai: <hypothesis>` | on a line: checks it; confirmed → a finding, otherwise an answer in `🤖💬` |
 
-Session commands:
+When a thread is done the agent removes your commands and its own `🤖💬`
+replies, so only the finding is left. When it answers or asks something, the
+thread waits for you: `ок` closes it, anything else continues the discussion.
+You never delete service comments by hand.
+
+#### In the session: the watcher and the whole draft
+
+Nothing polls GitHub until you say «следи», so the draft can wait for you as
+long as you like. While watching, the agent handles your draft commands once
+you have been quiet for about a minute. Watching ends by itself when you submit
+or discard the draft, or after two hours without commands.
 
 | Russian | English | What it does |
 |---|---|---|
-| «следи» | `watch` | start reacting to commands in the draft |
-| «синк» | `sync` | handle what is in the draft now, once |
+| «следи» | `watch` | start reacting to commands in the draft (handles what is already there first) |
+| «синк» | `sync` | handle what is in the draft now, once, without watching |
 | «пауза» | `pause` | stop watching; «следи» resumes |
 | «проверь драфт» | `validate draft` | before Submit: find commands not handled yet, open discussions and findings on lines that moved; remove the leftovers on your «да» |
-| «стоп» | `stop` | stop watching and clean up |
-| «убери все nit», … | `drop all nits`, … | a change across every 🤖 finding |
+| «стоп» | `stop` | stop watching and clean up the scratch |
+| «убери все nit», «переведи всё на en» | `drop all nits`, `translate all to en` | one change across every 🤖 finding |
 
-**Leaving the session in the background.** The skill's own tool grant lasts
-only for the turn you start it in. Later `draft.sh` calls may stop at a
-permission prompt that nobody sees, and the loop then waits. To avoid that,
-allow the script in `~/.claude/settings.json`:
+#### Leaving the session in the background
+
+The skill's own tool grant lasts only for the turn you start it in. Later
+`draft.sh` calls may stop at a permission prompt that nobody sees, and the loop
+then waits. To avoid that, allow the script in `~/.claude/settings.json`:
 
 ```json
 { "permissions": { "allow": ["Bash(bash *code-review/scripts/draft.sh*)"] } }
@@ -134,24 +172,6 @@ allow the script in `~/.claude/settings.json`:
 The wildcards match any command that runs a path ending in
 `code-review/scripts/draft.sh`; add the rule only if that is acceptable to you,
 otherwise answer the prompts when the session shows them.
-
-Commands are free text in Russian or English; these are the usual ones. In a
-🤖 thread no prefix is needed; elsewhere start with `ai:`.
-
-| Russian | English | What the agent does |
-|---|---|---|
-| `удали` | `delete` | deletes the 🤖 thread |
-| `короче`, `мягче`, `переформулируй: …` | `shorter`, `softer`, `rephrase: …` | rewrites the comment |
-| `en` / `ru` | `en` / `ru` | translates the comment |
-| `nit`, `should-fix`, `blocker`, `question` | same | changes the severity tag |
-| `предложи фикс` | `suggest fix` | adds a GitHub suggestion block |
-| `где ещё?` | `where else?` | lists other places with the same problem |
-| `артефакты` | `artifacts` | attaches a screenshot page (see `korvin89:review-artifacts`) |
-| `почему?` | `why?` | answers in the thread; the thread stays open |
-| `ок`, `оставь` | `ok`, `keep` | closes the discussion, keeps the comment |
-| `объедини с <ссылка \| path:line>` | `merge with <link \| path:line>` | folds those threads into this one; a file name and a line are enough |
-| `ai: оформи` | `ai: write up` | under your own comment: turns your note into a finding (gets the 🤖 marker) |
-| `ai: <гипотеза>` | `ai: <hypothesis>` | on a line: checks it; confirmed → becomes a finding, otherwise an answer |
 
 ### Per-repo conventions layer (not shipped here)
 
