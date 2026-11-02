@@ -42,7 +42,9 @@
 #                     changed for --quiet seconds (default 60)
 #   SUBMITTED <url>   the draft seen earlier was submitted
 #   DISCARDED         the draft seen earlier is gone without a submit
-#   IDLE              nothing actionable for --timeout seconds (default 7200)
+#   IDLE              --timeout seconds passed (default 7200) and no command is
+#                     waiting; a command found after a long laptop sleep still
+#                     gets its ACTIONABLE
 # Five failed polls in a row print "ERROR <message>" and exit 1.
 #
 # Requires: gh (authenticated) and jq.
@@ -363,7 +365,9 @@ cmd_watch() {
         return 1
       fi
     fi
-    if [ $((now - start)) -ge "$timeout" ]; then printf 'IDLE\n'; return 0; fi
+    if [ "${prev:-[]}" = "[]" ] && [ $((now - start)) -ge "$timeout" ]; then
+      printf 'IDLE\n'; return 0
+    fi
     sleep "$interval"
   done
 }

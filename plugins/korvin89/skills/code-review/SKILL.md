@@ -221,8 +221,10 @@ with `ai:` from their own comments.
 bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" watch <pr>
 ```
 
-It polls the draft and exits with one line; you are woken then. One watcher
-per PR: arm the next one only after the previous one has exited. The reviewer
+It polls the draft and exits with one line; you are woken then. Do not check
+on it in between — no reading its output, no extra `state` calls: the polling
+is its job. One watcher per PR: arm the next one only after the previous one
+has exited. The reviewer
 may write in the session meanwhile; answer as usual, the watcher keeps running.
 
 | Watcher line | Then |
