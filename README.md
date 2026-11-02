@@ -63,9 +63,9 @@ worktree in the review's scratch dir, `.git/code-review/pr-<N>/`. Your checkout
 and branch stay as they are; run the skill from a clone of the PR's repository.
 Everything else the review needs (the findings batch, artifact screenshots)
 goes into the same dir, never into `/tmp`. The dir is removed when the PR run
-ends (Submit, a discarded draft, «стоп», the end of `--quick`). It is kept on «пауза»
+ends (Submit, a discarded draft, `stop`, the end of `--quick`). It is kept on `pause`
 and when watching stops on its own (two idle hours, an auth or network error),
-so «следи» can resume, and kept when cleanup's checks find something. Every run
+so `watch` can resume, and kept when cleanup's checks find something. Every run
 lists the other reviews' dirs; `korvin89:cleanup` removes them.
 
 Everything else is asked in one prompt before the review: whether to run the
@@ -85,7 +85,7 @@ PR" or "review my changes".
    review in parallel), the findings join it, and points your own comments
    already make are left out. Findings in files outside the diff are listed in
    the session for your summary.
-4. **Loop** — once you say «следи» in the session, it watches the draft in the
+4. **Loop** — once you say `watch` in the session, it watches the draft in the
    background and edits it on your commands until you press **Submit** in
    GitHub; see *Working with the draft*.
 
@@ -95,19 +95,19 @@ A typical PR run:
 
 1. `/korvin89:code-review 1234` — answer the config prompt; the findings land
    in your draft review and the session waits.
-2. Open the PR's changes in GitHub when you have time, and say «следи» in the
+2. Open the PR's changes in GitHub when you have time, and say `watch` in the
    session: from now on the agent reacts to your commands in the draft.
 3. Curate in the draft: delete, rephrase, ask, add your own comments, ask the
    agent to write them up.
-4. Say «проверь драфт» before submitting, so nothing meant for the agent gets
+4. Say `validate draft` before submitting, so nothing meant for the agent gets
    published.
 5. Press **Submit review** in GitHub. A watching session notices, cleans up
-   its scratch, and the run ends; if it was not watching, say «стоп» there, or
+   its scratch, and the run ends; if it was not watching, say `stop` there, or
    run `/korvin89:cleanup 1234` later.
 
 Commands go to two places: **in the draft** for one finding or one line, **in
-the session** for the watcher and the whole draft. Both take Russian or English
-free text; the tables list the usual forms.
+the session** for the watcher and the whole draft. Commands are free
+text, in English or Russian; the tables list the usual forms.
 
 #### In the draft: one finding or one line
 
@@ -123,41 +123,41 @@ rules:
 - every other comment of yours is your review; the agent never edits or deletes
   it on its own.
 
-| Russian | English | What the agent does |
-|---|---|---|
-| `удали` | `delete` | deletes the 🤖 thread |
-| `короче`, `мягче`, `переформулируй: …` | `shorter`, `softer`, `rephrase: …` | rewrites the comment |
-| `en` / `ru` | `en` / `ru` | translates the comment |
-| `nit`, `should-fix`, `blocker`, `question` | same | changes the severity tag |
-| `предложи фикс` | `suggest fix` | adds a GitHub suggestion block for the commented line |
-| `где ещё?` | `where else?` | lists other places with the same problem |
-| `артефакты` | `artifacts` | attaches a screenshot page (see `korvin89:review-artifacts`) |
-| `объедини с <ссылка \| path:line>` | `merge with <link \| path:line>` | folds those threads into this one; a file name and a line are enough |
-| `почему?` | `why?` | answers in the thread with `🤖💬` |
-| `ок`, `оставь` | `ok`, `keep` | after the agent's `🤖💬`: closes the discussion, keeps the finding |
-| `ai: оформи` | `ai: write up` | under your own comment: turns your note into a finding (gets the 🤖 marker) |
-| `ai: <гипотеза>` | `ai: <hypothesis>` | on a line: checks it; confirmed → a finding, otherwise an answer in `🤖💬` |
+| Command | What the agent does |
+|---|---|
+| `delete` | deletes the 🤖 thread |
+| `shorter`, `softer`, `rephrase: …` | rewrites the comment |
+| `en` / `ru` | translates the comment |
+| `nit`, `should-fix`, `blocker`, `question` | changes the severity tag |
+| `suggest fix` | adds a GitHub suggestion block for the commented line |
+| `where else?` | lists other places with the same problem |
+| `artifacts` | attaches a screenshot page (see `korvin89:review-artifacts`) |
+| `merge with <link \| path:line>` | folds those threads into this one; a file name and a line are enough |
+| `why?` | answers in the thread with `🤖💬` |
+| `ok`, `keep` | after the agent's `🤖💬`: closes the discussion, keeps the finding |
+| `ai: write up` | under your own comment: turns your note into a finding (gets the 🤖 marker) |
+| `ai: <hypothesis>` | on a line: checks it; confirmed → a finding, otherwise an answer in `🤖💬` |
 
 When a thread is done the agent removes your commands and its own `🤖💬`
 replies, so only the finding is left. When it answers or asks something, the
-thread waits for you: `ок` closes it, anything else continues the discussion.
+thread waits for you: `ok` closes it, anything else continues the discussion.
 You never delete service comments by hand.
 
 #### In the session: the watcher and the whole draft
 
-Nothing polls GitHub until you say «следи», so the draft can wait for you as
+Nothing polls GitHub until you say `watch`, so the draft can wait for you as
 long as you like. While watching, the agent handles your draft commands once
 you have been quiet for about a minute. Watching ends by itself when you submit
 or discard the draft, or after two hours without commands.
 
-| Russian | English | What it does |
-|---|---|---|
-| «следи» | `watch` | start reacting to commands in the draft (handles what is already there first) |
-| «синк» | `sync` | handle what is in the draft now, once, without watching |
-| «пауза» | `pause` | stop watching; «следи» resumes |
-| «проверь драфт» | `validate draft` | before Submit: find commands not handled yet, open discussions and findings on lines that moved; remove the leftovers on your «да» |
-| «стоп» | `stop` | stop watching and clean up the scratch |
-| «убери все nit», «переведи всё на en» | `drop all nits`, `translate all to en` | one change across every 🤖 finding |
+| Command | What it does |
+|---|---|
+| `watch` | start reacting to commands in the draft (handles what is already there first) |
+| `sync` | handle what is in the draft now, once, without watching |
+| `pause` | stop watching; `watch` resumes |
+| `validate draft` | before Submit: find commands not handled yet, open discussions and findings on lines that moved; remove the leftovers once you confirm |
+| `stop` | stop watching and clean up the scratch |
+| `drop all nits`, `translate all to en` | one change across every 🤖 finding |
 
 #### Leaving the session in the background
 
@@ -225,7 +225,7 @@ Builds one shareable artifact page for a review finding: a short text on top,
 a collapsed block of screenshot pairs (base vs PR, side by side), a collapsed
 block of the configs behind them. Publishes it with Claude Code's Artifact
 tool and returns the link; the page stays private until you press **Share**.
-User-invoked only, and read by `code-review` for findings marked `+артефакты`:
+User-invoked only, and read by `code-review` when you write `artifacts` in a finding's thread:
 
 ```text
 /korvin89:review-artifacts stacked bar with negative values, default and dark theme
