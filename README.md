@@ -59,9 +59,11 @@ in [references/rubric.md](plugins/korvin89/skills/code-review/references/rubric.
 
 On a PR the skill reads the code at the PR's head, not in your checkout: it
 fetches the head from the git remote that points at the PR's repository into a
-scratch worktree inside `.git/code-review/`, and removes it when the run ends.
-Your checkout and branch stay as they are; run the skill from a clone of the
-PR's repository.
+worktree in the review's scratch dir, `.git/code-review/pr-<N>/`. Your checkout
+and branch stay as they are; run the skill from a clone of the PR's repository.
+Everything else the review needs (the findings batch, artifact screenshots)
+goes into the same dir, never into `/tmp`. It is removed when the run ends;
+see `korvin89:cleanup`.
 
 Everything else is asked in one prompt before the review: whether to run the
 second pass, the comment language, and any focus areas to scrutinize.
@@ -150,6 +152,35 @@ rubric is the base, project conventions add to and override it, and on a direct
 conflict the project layer wins. A line `comment-language: en` (or `ru`, or any
 language name) in that file sets the repo's default comment language.
 
+## `korvin89:cleanup`
+
+Removes what the review skills keep for one pull request:
+`<repo>/.git/code-review/pr-<N>/` — the PR head worktree, the findings batch,
+and the screenshots, configs and worktrees of `review-artifacts`. User-invoked
+only:
+
+```text
+/korvin89:cleanup 1234     # the scratch of PR #1234
+/korvin89:cleanup local    # the scratch of a review without a PR
+/korvin89:cleanup          # lists what exists; removes nothing
+```
+
+Before removing anything it checks that the scratch belongs to that PR and is
+not in use:
+
+- a git remote of this repository points at the PR's repository;
+- `head/` is the PR's head or an older head of it;
+- no worktree has uncommitted or untracked files;
+- the session is not inside the scratch;
+- no draft watcher runs for the PR.
+
+When a check fails it lists why and asks before removing.
+
+`code-review` runs the same script when a PR run ends, and keeps the scratch
+when a check fails. Every review run also removes the scratch of other merged
+or closed PRs that passes all checks. Published artifact pages and draft
+reviews are never touched.
+
 ## `korvin89:review-artifacts`
 
 Builds one shareable artifact page for a review finding: a short text on top,
@@ -165,5 +196,7 @@ User-invoked only, and read by `code-review` for findings marked `+артефа�
 The skill does not know how a given repo renders screenshots: it asks once
 per run (command, story or fixture, viewport, theme), renders each pair in
 separate `git worktree`s so your checkout is untouched, and assembles the page
-with `scripts/build-page.sh` from a `manifest.json`. Requires `jq`; the
+with `scripts/build-page.sh` from a `manifest.json`. Its files and worktrees go
+into the review's scratch dir (`.git/code-review/<pr-N | local>/artifacts/`),
+which `korvin89:cleanup` removes. Requires `jq`; the
 Artifact tool needs a claude.ai login (CLI or desktop app).

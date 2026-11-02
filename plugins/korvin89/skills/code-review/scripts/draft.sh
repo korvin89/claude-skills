@@ -47,7 +47,8 @@
 #                     gets its ACTIONABLE
 #   AUTH <message>    gh is not authenticated (HTTP 401 or no login): exit 1 at
 #                     once, as every later poll would fail alike
-# Five failed polls in a row print "ERROR <message>" and exit 1.
+# Five failed polls in a row print "ERROR <message>" and exit 1. While watch
+# runs, <git-common-dir>/code-review/pr-<N>/watch.pid holds its pid.
 #
 # Every GitHub call is cut after DRAFT_CALL_DEADLINE seconds (default 30), so a
 # hung network call fails like any other instead of stalling the watcher.
@@ -82,7 +83,8 @@ command -v jq >/dev/null 2>&1 || {
 }
 
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+pidfile=""
+trap 'rm -rf "$tmp"; [ -z "$pidfile" ] || [ "$(cat "$pidfile" 2>/dev/null)" != "$$" ] || rm -f "$pidfile"' EXIT
 CALL_DEADLINE="${DRAFT_CALL_DEADLINE:-30}"
 
 # deadline <cmd…> — run cmd, TERM it after $CALL_DEADLINE seconds; 124 on timeout.
@@ -369,6 +371,14 @@ cmd_watch() {
     case "${2:-}" in ''|*[!0-9]*) die 4 "$1 needs a whole number of seconds." ;; esac
     shift 2
   done
+
+  # Mark the review's scratch as in use while watching: cleanup.sh warns
+  # before removing it (see cleanup/scripts/cleanup.sh for the layout).
+  local common
+  if common="$(git rev-parse --git-common-dir 2>/dev/null)"; then
+    pidfile="$(cd "$common" && pwd -P)/code-review/pr-$num/watch.pid"
+    mkdir -p "${pidfile%/*}" && printf '%s\n' "$$" > "$pidfile"
+  fi
 
   local start now s review seen="" fp prev="" since=0 fails=0
   start="$(date +%s)"

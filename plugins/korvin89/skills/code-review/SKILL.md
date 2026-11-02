@@ -28,6 +28,8 @@ Files bundled with this plugin:
 - `${CLAUDE_SKILL_DIR}/scripts/draft.sh` — reads and edits the reviewer's draft
   review (Steps 3, 7, 8). Its header documents the subcommands, the comment
   kinds and the guards.
+- `${CLAUDE_PLUGIN_ROOT}/skills/cleanup/scripts/cleanup.sh` — removes the
+  review's scratch at the end (*Cleanup*).
 - `${CLAUDE_PLUGIN_ROOT}/skills/review-artifacts/SKILL.md` — screenshot pairs
   and configs on an artifact page, for a thread that asks for artifacts
   (Step 8). Read only then.
@@ -87,7 +89,9 @@ and every comment already on the PR. Its exit codes:
 - `4` / `5` — bad argument / nothing to review. Relay the script's message in
   Russian and stop.
 
-In PR mode, `### WORKTREE:` is a checkout of the PR head made for this review.
+`### SCRATCH:` is the one place for this review's files — the batch, artifact
+pages' screenshots and worktrees; write nothing for the review to `/tmp`. In PR
+mode, `### WORKTREE:` is a checkout of the PR head made for this review.
 For the whole run — passes, second pass, draft loop — read and grep the PR's
 files there, never in the current checkout: it may be on another branch. When a
 `### NOTE:` says the head could not be checked out, review from the diff alone
@@ -200,7 +204,7 @@ it, and curation happens there.
    ```
 
    ```
-   bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" add <pr> /tmp/review-batch-<pr-number>.json
+   bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" add <pr> <scratch>/batch.json
    ```
 
    `line` is the new-side line. A line outside the diff becomes a file-level
@@ -280,7 +284,7 @@ The language of a command does not change the comment language.
 | `nit` · `should-fix` · `blocker` · `question` (same in both) | change the tag; rewrite the text when the tag changes what it says |
 | `предложи фикс` · `suggest fix` | append a `suggestion` block that replaces exactly the commented line; a wider fix goes into a plain code block |
 | `где ещё?` · `where else?` | find the same problem elsewhere in the diff and add those `path:line` to the finding |
-| `артефакты` · `artifacts` | follow `review-artifacts` with the finding as the subject; append its `Артефакты: <link>` line |
+| `артефакты` · `artifacts` | follow `review-artifacts` with the finding as the subject and `<scratch>` as its scratch dir; append its `Артефакты: <link>` line |
 | `почему?` · `why?`, any question | answer with a reply; the thread stays open |
 | `ок`, `оставь` · `ok`, `keep` after your reply | delete the `cmd` comments and your replies; the target stays as it is |
 | `объедини с <link \| path:line>` · `merge with <link \| path:line>`, one or more | merge the referenced threads into this one, which stays (see below) |
@@ -303,12 +307,15 @@ now; a request across the whole draft («убери все nit» · `drop all ni
 «переведи всё на en» · `translate all to en`) — apply it to every `ai` finding
 and report; «стоп» · `stop` — stop the watcher, clean up, and end the loop.
 
-**Cleanup.** When the run ends for good — `SUBMITTED`, `DISCARDED`, «стоп», or
-the end of a `--quick` PR run — remove the review worktree, a scratch checkout
-that holds nothing of the reviewer's:
+**Cleanup.** When a PR run ends for good — `SUBMITTED`, `DISCARDED`, «стоп», or
+the end of a `--quick` run — remove its scratch:
 
 ```
-git worktree remove --force <path from ### WORKTREE:>
+bash "${CLAUDE_PLUGIN_ROOT}/skills/cleanup/scripts/cleanup.sh" <pr>
 ```
 
-After `IDLE`, `AUTH` or `ERROR` keep it: «синк» resumes the loop.
+Exit 10 means its checks found something (uncommitted work in a worktree, a
+scratch that may be another PR's, a watcher still running) and nothing was
+removed: relay the warnings in one Russian line and suggest
+`/korvin89:cleanup <pr>`. Never add `--yes` yourself. After `IDLE`, `AUTH` or
+`ERROR` keep the scratch: «синк» resumes the loop.

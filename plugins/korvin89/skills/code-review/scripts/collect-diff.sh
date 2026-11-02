@@ -12,18 +12,24 @@
 # Modes:
 #   pr     a PR reference was given. Requires `gh`. The PR head is fetched from
 #          the git remote that points at the PR's repository and checked out,
-#          detached, into <git-common-dir>/code-review/pr-<N>: files are read at
-#          the PR's version whatever the current checkout is, and the current
-#          checkout is not touched. A later run for the same PR moves that
-#          worktree to the new head.
+#          detached, into <scratch>/head: files are read at the PR's version
+#          whatever the current checkout is, and the current checkout is not
+#          touched. A later run for the same PR moves that worktree to the new
+#          head.
 #   local  no PR reference: everything not yet in the default branch — the
 #          commits since the merge-base with origin/<default> (the local
 #          default branch when there is no origin), uncommitted changes and
 #          untracked files.
 #
+# <scratch> is <git-common-dir>/code-review/pr-<N>, or …/local without a PR:
+# the one place for everything a review leaves behind; ../../cleanup/scripts/
+# cleanup.sh documents its layout and removes it. Every run first removes the
+# scratch of other merged or closed PRs that passes cleanup's checks.
+#
 # Output is plain text; every section starts with "### ":
 #   ### MODE: pr|local
 #   ### TARGET: <human description>
+#   ### SCRATCH: <dir>                            (created on demand in local mode)
 #   ### WORKTREE: <path> (<sha>)                  (pr mode, when the head is checked out)
 #   ### NOTE: …                                   (warnings, optional)
 #   ### PR TITLE / ### PR BODY / ### EXISTING COMMENTS   (pr mode only)
@@ -59,6 +65,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+scratch_root="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)/code-review"
+
+# Sweep the scratch of merged or closed PRs; its lines become notes below.
+cleanup="$(dirname "$0")/../../cleanup/scripts/cleanup.sh"
+swept=""
+keep="${pr##*/pull/}"; keep="${keep%%[!0-9]*}"
+[ -f "$cleanup" ] && swept="$(bash "$cleanup" --stale ${keep:+--keep "$keep"} 2>/dev/null || true)"
+notes() { [ -z "$swept" ] || printf '%s\n' "$swept" | sed 's/^/### NOTE: scratch: /'; }
+
 # Base ref for local comparisons. Prefer origin/<default>: a stale local main
 # would leak upstream commits into the diff.
 base_ref() {
@@ -76,7 +91,7 @@ base_ref() {
 # pr_worktree <owner> <repo> <num> — check the PR head out into the review
 # worktree; print "<path>\t<sha>", or a reason on stderr and return 1.
 pr_worktree() {
-  local owner="$1" repo="$2" num="$3" want remote="" name url _ common wt sha
+  local owner="$1" repo="$2" num="$3" want remote="" name url _ wt sha
   want="$(printf '/%s/%s' "$owner" "$repo" | tr '[:upper:]' '[:lower:]')"
   # Any remote URL form ends in /owner/repo once ':' is '/' and .git is gone.
   while read -r name url _; do
@@ -89,14 +104,13 @@ pr_worktree() {
   git fetch --quiet --no-tags "$remote" "pull/$num/head" 2>/dev/null \
     || { err "git fetch $remote pull/$num/head failed"; return 1; }
   sha="$(git rev-parse FETCH_HEAD)"
-  common="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
-  wt="$common/code-review/pr-$num"
+  wt="$scratch_root/pr-$num/head"
   git worktree prune
   if [ -e "$wt/.git" ]; then
     git -C "$wt" checkout --quiet --force --detach "$sha" 2>/dev/null \
       || { err "could not move $wt to $sha"; return 1; }
   else
-    mkdir -p "$common/code-review"
+    mkdir -p "$scratch_root/pr-$num"
     git worktree add --quiet --detach "$wt" "$sha" 2>/dev/null \
       || { err "git worktree add $wt failed"; return 1; }
   fi
@@ -116,6 +130,9 @@ if [ -n "$pr" ]; then
   rest="${url#*://}"; host="${rest%%/*}"; rest="${rest#*/}"
   owner="${rest%%/*}"; rest="${rest#*/}"; repo="${rest%%/*}"; num="${url##*/}"
   printf '%s\n' "${head#*$'\n'}"
+  mkdir -p "$scratch_root/pr-$num"
+  printf '### SCRATCH: %s\n' "$scratch_root/pr-$num"
+  notes
 
   reason="$(mktemp)"
   trap 'rm -f "$reason"' EXIT
@@ -182,8 +199,9 @@ untracked="$(git ls-files --others --exclude-standard)"
 target="$cur"
 [ -n "$base" ] && target="$target: $ahead commit(s) since $base (merge-base $(git rev-parse --short "$from"))"
 [ -n "$(git status --porcelain)" ] && target="$target + uncommitted changes"
-printf '### MODE: local\n### TARGET: %s\n' "$target"
+printf '### MODE: local\n### TARGET: %s\n### SCRATCH: %s\n' "$target" "$scratch_root/local"
 [ -z "$note" ] || printf '%s\n' "$note"
+notes
 printf '\n### CHANGED FILES\n%s\n\n### DIFF\n' "$files"
 git diff "$from"
 if [ -n "$untracked" ]; then
