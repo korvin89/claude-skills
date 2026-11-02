@@ -12,6 +12,7 @@
 #   draft.sh reply  <pr> <thread-id>               agent reply in a thread (body on stdin)
 #   draft.sh edit   <pr> <comment-id>              replace a comment body (body on stdin)
 #   draft.sh delete <pr> <comment-id>...           delete draft comments, newest first
+#   draft.sh validate <pr>                         what must be settled before Submit
 #   draft.sh watch  <pr> [--review <id>] [--interval S] [--quiet S] [--timeout S]
 #
 # <pr> is a …/pull/N URL — or a number, which gh resolves against the current
@@ -42,6 +43,13 @@
 # `bot` comment; delete refuses own and published ones (and deletes nothing
 # when any id is refused); reply prepends "🤖💬" when missing and only goes
 # into threads that hold draft comments.
+#
+# validate prints JSON: `pending` — threads with commands not handled yet;
+# `open` — discussions where the agent's reply is the last word; `outdated` —
+# threads whose line changed since they were written; `warning` — the draft
+# holds more threads than state can see; `clean` — true when all are empty.
+# Each pending/open entry lists `service`: the ids of its cmd and bot comments,
+# which are what Submit would publish by mistake.
 #
 # watch polls the draft every --interval seconds (default 20), prints one line
 # and exits:
@@ -80,7 +88,7 @@ usage() { die 4 "Usage: draft.sh add|state|reply|edit|delete|watch <pr> … (see
 
 [ $# -ge 2 ] || usage
 cmd="$1"; pr="${2#\#}"; shift 2
-case "$cmd" in add|state|reply|edit|delete|watch) ;; *) usage ;; esac
+case "$cmd" in add|state|reply|edit|delete|validate|watch) ;; *) usage ;; esac
 
 command -v gh >/dev/null 2>&1 || {
   err "GitHub CLI (gh) is required to work with a pull request but was not found."
@@ -395,6 +403,27 @@ cmd_delete() {
   done
 }
 
+# ------------------------------------------------------------ validate ----
+cmd_validate() {
+  [ $# -eq 0 ] || usage
+  local state
+  state="$(fetch_state)" || exit 1
+  jq '
+    def where: if .file_level then .path else "\(.path):\(.line)" end;
+    def service: [.comments[] | select(.kind == "cmd" or .kind == "bot") | .id];
+    def has_service: any(.comments[]; .kind == "cmd" or .kind == "bot");
+    { review,
+      pending:  [.threads[] | select(.actionable) | {thread: .id, where: where, service: service}],
+      open:     [.threads[] | select((.actionable | not) and has_service)
+                 | {thread: .id, where: where, service: service,
+                    reply: ([.comments[] | select(.kind == "bot")] | last | .body | .[0:200])}],
+      outdated: [.threads[] | select(.outdated and any(.comments[]; .kind == "ai" or .kind == "own"))
+                 | {thread: .id, where: where}],
+      warning }
+    | .clean = (.review != null and (.pending + .open + .outdated | length) == 0 and .warning == null)
+  ' <<<"$state"
+}
+
 # --------------------------------------------------------------- watch ----
 cmd_watch() {
   local interval=20 quiet=60 timeout=7200 seen=""
@@ -468,5 +497,6 @@ case "$cmd" in
   reply)  cmd_reply "$@" ;;
   edit)   cmd_edit "$@" ;;
   delete) cmd_delete "$@" ;;
+  validate) cmd_validate "$@" ;;
   watch)  cmd_watch "$@" ;;
 esac

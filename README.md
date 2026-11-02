@@ -85,8 +85,9 @@ PR" or "review my changes".
    review in parallel), the findings join it, and points your own comments
    already make are left out. Findings in files outside the diff are listed in
    the session for your summary.
-4. **Loop** — the session watches the draft in the background and edits it on
-   your commands until you press **Submit** in GitHub.
+4. **Loop** — once you say «следи» in the session, it watches the draft in the
+   background and edits it on your commands until you press **Submit** in
+   GitHub. Until then nothing polls GitHub, so the draft can wait for you.
 
 ### Talking to the agent in the draft
 
@@ -103,11 +104,23 @@ rules:
 - every other comment of yours is your review; the agent never edits or deletes
   it on its own.
 
-The agent picks up commands once you have been quiet for about a minute,
-handles them in one pass, and removes your commands and its own `🤖💬` replies
-when a thread is resolved, so the draft stays ready to submit. A thread where
-the agent asked a question stays until you answer. Watching ends by itself when
-you submit or discard the draft, or after two hours without commands.
+While it watches, the agent picks up commands once you have been quiet for
+about a minute, handles them in one pass, and removes your commands and its
+own `🤖💬` replies when a thread is resolved, so the draft stays ready to
+submit. A thread where the agent asked a question stays until you answer.
+Watching ends by itself when you submit or discard the draft, or after two
+hours without commands.
+
+Session commands:
+
+| Russian | English | What it does |
+|---|---|---|
+| «следи» | `watch` | start reacting to commands in the draft |
+| «синк» | `sync` | handle what is in the draft now, once |
+| «пауза» | `pause` | stop watching; «следи» resumes |
+| «проверь драфт» | `validate draft` | before Submit: find commands not handled yet, open discussions and findings on lines that moved; remove the leftovers on your «да» |
+| «стоп» | `stop` | stop watching and clean up |
+| «убери все nit», … | `drop all nits`, … | a change across every 🤖 finding |
 
 **Leaving the session in the background.** The skill's own tool grant lasts
 only for the turn you start it in. Later `draft.sh` calls may stop at a
@@ -139,10 +152,6 @@ Commands are free text in Russian or English; these are the usual ones. In a
 | `объедини с <ссылка \| path:line>` | `merge with <link \| path:line>` | folds those threads into this one; a file name and a line are enough |
 | `ai: оформи` | `ai: write up` | under your own comment: turns your note into a finding (gets the 🤖 marker) |
 | `ai: <гипотеза>` | `ai: <hypothesis>` | on a line: checks it; confirmed → becomes a finding, otherwise an answer |
-
-In the session: «синк» / `sync` runs a pass now, «стоп» / `stop` stops
-watching; requests across the whole draft («убери все nit» / `drop all nits`)
-work there too.
 
 ### Per-repo conventions layer (not shipped here)
 

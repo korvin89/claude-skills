@@ -238,17 +238,31 @@ it, and curation happens there.
    the review id from that line, `(review …)`, for the watcher. On the first
    run in a session, add the protocol:
 
-   > Находки в твоём драфте, Submit — за тобой. Мне можно писать прямо там:
-   > ответ в 🤖-треде или комментарий, начинающийся с `ai:` или `ии:` (на любой
-   > строке или под своим комментарием; `фш:` и `bb:` в другой раскладке тоже
-   > пойму). Подхвачу, когда ты на минуту затихнешь, и сам уберу служебные
-   > реплики. Команды — по-русски или по-английски. Твои комментарии без
-   > префикса не трогаю.
+   > Находки в твоём драфте, Submit — за тобой. Когда сядешь его разбирать,
+   > скажи «следи» — начну реагировать на команды в драфте: ответ в 🤖-треде или
+   > комментарий, начинающийся с `ai:` или `ии:` (на любой строке или под своим
+   > комментарием; `фш:` и `bb:` в другой раскладке тоже пойму). «синк» — разобрать
+   > накопившееся один раз, «пауза» — перестать следить, «проверь драфт» —
+   > перед Submit найти всё служебное. Команды — по-русски или по-английски.
+   > Твои комментарии без префикса не трогаю.
 
-Go on to Step 8 even when no finding went in: the reviewer can still call you
-with `ai:` from their own comments.
+Then wait: nothing polls the draft until the reviewer asks. Step 8 is driven by
+the session commands below, also when no finding went in — the reviewer can
+still call you with `ai:` from their own comments.
 
-## Step 8 — Draft loop
+## Step 8 — Draft loop (on the reviewer's command)
+
+| The reviewer says | You do |
+|---|---|
+| «следи» · `watch` | run a pass (it does nothing when no command waits), then arm the watcher unless one is running |
+| «синк» · `sync` | run a pass now; a running watcher keeps running, none is armed |
+| «пауза» · `pause` | stop the watcher; the scratch stays, «следи» resumes |
+| «проверь драфт» · `validate draft` | validate the draft (*Validate*) |
+| «стоп» · `stop` | stop the watcher, clean up, end the loop |
+| a request across the whole draft («убери все nit» · `drop all nits`, «переведи всё на en» · `translate all to en`) | apply it to every `ai` finding and report |
+
+Stop a watcher with the task-stop tool on its background task, or
+`kill "$(cat <scratch>/watch.pid)"`.
 
 **Arm the watcher** with the Bash tool and `run_in_background: true`:
 
@@ -271,10 +285,10 @@ the watcher keeps running.
 | `ACTIONABLE <n>` | run a pass (below), then arm the watcher again |
 | `SUBMITTED <url>` | one Russian line with the link; clean up; the loop ends |
 | `DISCARDED` | one line: the draft was discarded; clean up; the loop ends |
-| `AUTH …` | one line: `gh` is not logged in, `gh auth login` then «синк»; the loop ends |
-| `IDLE` | one line: two hours without commands, «синк» resumes; the loop ends |
-| `ERROR …` | relay it in one line, «синк» resumes; the loop ends |
-| exit with no line | a usage error: relay its stderr in one line; the loop ends |
+| `AUTH …` | one line: `gh` is not logged in, `gh auth login` then «следи»; watching stops |
+| `IDLE` | one line: two hours without commands, «следи» resumes; watching stops |
+| `ERROR …` | relay it in one line, «следи» resumes; watching stops |
+| exit with no line | a usage error: relay its stderr in one line; watching stops |
 
 **A pass.** Run `draft.sh state <pr>`. When its `review` is null the draft is
 gone: `latest` (state not `PENDING`) means it was submitted, its `url` is the
@@ -304,9 +318,9 @@ every thread with `actionable: true`. For each:
    for nothing. A `cmd` that arrived after your `state` call waits for the
    next pass.
 
-Then one Russian line per thread in the session (`path:line` — what was done),
-and arm the watcher again — unless one is still running, as after a «синк»
-pass.
+Then one Russian line per thread in the session (`path:line` — what was done).
+After a pass woken by `ACTIONABLE`, arm the watcher again; after «синк» leave
+the watcher as it was.
 
 Commands come in Russian or English, as free text; the table gives both forms.
 The language of a command does not change the comment language.
@@ -336,13 +350,25 @@ own comment is theirs to delete: fold its point in and name it in the session.
 A reference that matches nothing, or more than one thread, gets a reply asking
 which.
 
-**In the session** the reviewer can also say: «синк» · `sync` — run a pass
-now (a running watcher keeps running; with none running, arm one after the
-pass); a request across the whole draft («убери все nit» · `drop all nits`,
-«переведи всё на en» · `translate all to en`) — apply it to every `ai` finding
-and report; «стоп» · `stop` — stop the watcher (the task-stop tool on its
-background task, or `kill "$(cat <scratch>/watch.pid)"`), clean up, and end
-the loop.
+**Validate.** Before Submit nothing addressed to you may be left in the draft:
+Submit would publish it.
+
+```
+bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" validate <pr>
+```
+
+Report in Russian, one line per entry:
+- `pending` — commands not handled yet: offer to run a pass now;
+- `open` — discussions where your `🤖💬` reply is the last word: offer to delete
+  each one's `service` comments (`draft.sh delete`); delete only on the
+  reviewer's «да», since the reviewer may still want to answer;
+- `outdated` — findings whose line changed after a push: name them, the
+  reviewer decides;
+- `warning` — not every thread is visible: say so;
+- `review` null — there is no draft (submitted or discarded).
+
+Validate again after acting on it. End with «драфт чист, можно Submit» when
+`clean` is true, or with what remains.
 
 **Cleanup.** When a PR run ends for good — `SUBMITTED`, `DISCARDED`, «стоп», or
 the end of a `--quick` run — remove its scratch:
@@ -356,4 +382,4 @@ scratch that may be another PR's, a watcher still running) and nothing was
 removed: relay the warnings in one Russian line and suggest
 `/korvin89:cleanup <pr>`. Never confirm on the reviewer's behalf: no
 `--yes=…` from this skill. After `IDLE`, `AUTH` or
-`ERROR` keep the scratch: «синк» resumes the loop.
+`ERROR`, and on «пауза», keep the scratch: «следи» resumes the loop.
