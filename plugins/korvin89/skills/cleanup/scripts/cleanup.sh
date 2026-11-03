@@ -15,6 +15,7 @@
 #   artifacts/<slug>/  screenshots, configs and their worktrees (review-artifacts)
 #   watch.pid, watch-task.pid
 #                      the pid of a running watcher (draft.sh, follow.sh)
+#   watch.json         what draft.sh watch has announced (code-review)
 # It sits inside .git, so it never shows in `git status`.
 #
 # Usage:

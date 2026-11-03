@@ -4,10 +4,17 @@
 #
 # Usage:
 #   collect-diff.sh [PR_NUMBER | #PR_NUMBER | PR_URL] [--quick]
+#   collect-diff.sh <PR> --update
 #
-# The whole skill argument string can be passed through verbatim: --quick is
-# accepted and ignored here. Anything else that is not a PR reference is an
-# error (exit 4) — the script never guesses a mode from a malformed argument.
+# The whole skill argument string can be passed through verbatim. --quick
+# only turns off the re-review part (### SINCE). Anything else that is not a
+# PR reference is an error (exit 4) — the script never guesses a mode from a
+# malformed argument.
+#
+# --update, after a push: move the review worktree to the PR head and print
+# only what the push changed — ### WORKTREE, then ### NEW COMMITS and
+# ### PUSH DELTA (from the commit head/ was on to the head, the PR's files
+# only).
 #
 # Modes:
 #   pr     a PR reference was given. Requires `gh`. The PR head is fetched from
@@ -15,7 +22,10 @@
 #          detached, into <scratch>/head: files are read at the PR's version
 #          whatever the current checkout is, and the current checkout is not
 #          touched. A later run for the same PR moves that worktree to the new
-#          head.
+#          head. When you have already reviewed the code of the PR (see
+#          `draft.sh threads`), the commit of that review is ### SINCE, and
+#          what changed after it — the commits, and the diff of the PR's files
+#          from that commit to the head — follows the diff.
 #   local  no PR reference: everything not yet in the default branch — the
 #          commits since the merge-base with origin/<default> (the local
 #          default branch when there is no origin), uncommitted changes and
@@ -26,17 +36,22 @@
 # Its layout and its removal live in ../../cleanup/scripts/cleanup.sh. This
 # script records the PR's URL in it (pr.url), never moves a head/ that holds
 # local changes, and only lists other reviews' scratch in a note — it removes
-# nothing.
+# nothing. Looking up your earlier review, it runs `draft.sh threads`, which
+# marks the current review request and replies as answered in watch.json.
 #
 # Output is plain text; every section starts with "### ":
 #   ### MODE: pr|local
 #   ### TARGET: <human description>
 #   ### SCRATCH: <dir>                            (created on demand in local mode)
 #   ### WORKTREE: <path> (<sha>)                  (pr mode, when the head is checked out)
+#   ### SINCE: <sha> — your last review <url> (<date>)
+#                                                 (pr mode, when you have reviewed the code before)
 #   ### NOTE: …                                   (warnings and the other reviews' scratch, optional)
 #   ### PR TITLE / ### PR BODY / ### EXISTING COMMENTS   (pr mode only)
 #   ### CHANGED FILES
 #   ### DIFF
+#   ### COMMITS SINCE YOUR REVIEW / ### DELTA     (after ### SINCE, when its commit is available)
+#   ### NEW COMMITS / ### PUSH DELTA              (--update only; nothing else follows WORKTREE)
 #   ### UNTRACKED FILES                           (local mode, when present)
 #
 # Exit codes: 0 ok · 1 gh failed (PR not found, auth) · 2 not a git repo · 3 gh missing
@@ -52,10 +67,11 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
   || die 2 "Not inside a git repository — cannot collect a diff."
 
 # ------------------------------------------------------------- arguments ----
-pr=""
+pr=""; quick=0; update=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --quick) ;;                                              # a skill flag, not ours
+    --quick)  quick=1 ;;
+    --update) update=1 ;;
     --*)     die 4 "Unknown flag: '$1'." ;;
     *)
       a="${1#\#}"                                            # allow "#123"
@@ -67,6 +83,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+[ "$update" = 0 ] || [ -n "$pr" ] || die 4 "--update needs a PR reference."
 
 scratch_root="$(CDPATH='' cd -P -- "$(git rev-parse --git-common-dir)" && pwd -P)/code-review"
 cleanup="$(dirname "$0")/../../cleanup/scripts/cleanup.sh"
@@ -93,18 +110,25 @@ base_ref() {
   return 1
 }
 
-# pr_worktree <owner> <repo> <num> — check the PR head out into the review
-# worktree; print "<path>\t<sha>", or a reason on stderr and return 1.
-pr_worktree() {
-  local owner="$1" repo="$2" num="$3" want remote="" name url _ wt sha
-  want="$(printf '/%s/%s' "$owner" "$repo" | tr '[:upper:]' '[:lower:]')"
+# pr_remote <owner> <repo> — the git remote that points at that repository.
+pr_remote() {
+  local want name url _
+  want="$(printf '/%s/%s' "$1" "$2" | tr '[:upper:]' '[:lower:]')"
   # Any remote URL form ends in /owner/repo once ':' is '/' and .git is gone.
   while read -r name url _; do
     url="$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]' | tr ':' '/')"
     url="${url%/}"; url="${url%.git}"
-    case "$url" in *"$want") remote="$name"; break ;; esac
+    case "$url" in *"$want") printf '%s\n' "$name"; return 0 ;; esac
   done < <(git remote -v | awk '$3 == "(fetch)"')
-  [ -n "$remote" ] || { err "no git remote points at $owner/$repo"; return 1; }
+  return 1
+}
+
+# pr_worktree <owner> <repo> <num> — check the PR head out into the review
+# worktree; print "<path>\t<checked-out sha>\t<PR head sha>[\t<note>]", or a
+# reason on stderr and return 1.
+pr_worktree() {
+  local owner="$1" repo="$2" num="$3" remote wt sha
+  remote="$(pr_remote "$owner" "$repo")" || { err "no git remote points at $owner/$repo"; return 1; }
 
   git fetch --quiet --no-tags "$remote" "pull/$num/head" 2>/dev/null \
     || { err "git fetch $remote pull/$num/head failed"; return 1; }
@@ -117,7 +141,7 @@ pr_worktree() {
     if [ -n "$dirty" ]; then
       # Never throw away changes someone made in head/: keep it where it is.
       old="$(git -C "$wt" rev-parse HEAD)"
-      printf '%s\t%s\t%s\n' "$wt" "$old" "head/ has local changes and was not moved to the PR head $sha; its files may be outdated"
+      printf '%s\t%s\t%s\t%s\n' "$wt" "$old" "$sha" "head/ has local changes and was not moved to the PR head $sha; its files may be outdated"
       return 0
     fi
     git -C "$wt" checkout --quiet --detach "$sha" 2>/dev/null \
@@ -129,7 +153,7 @@ pr_worktree() {
     git worktree add --quiet --force --detach "$wt" "$sha" 2>/dev/null \
       || { err "git worktree add $wt failed"; return 1; }
   fi
-  printf '%s\t%s\n' "$wt" "$sha"
+  printf '%s\t%s\t%s\n' "$wt" "$sha" "$sha"
 }
 
 # --------------------------------------------------------------- PR mode ----
@@ -155,17 +179,56 @@ if [ -n "$pr" ]; then
   mkdir -p "$scratch"
   printf '%s\n' "$url" > "$scratch/pr.url"
   printf '### SCRATCH: %s\n' "$scratch"
-  others "pr-$num"
+  [ "$update" = 1 ] || others "pr-$num"
 
+  old=""
+  [ ! -e "$scratch/head/.git" ] || old="$(git -C "$scratch/head" rev-parse HEAD 2>/dev/null || true)"
   reason="$(mktemp)"
   trap 'rm -f "$reason"' EXIT
+  wt_sha=""; pr_head=""
   if wt="$(pr_worktree "$owner" "$repo" "$num" 2>"$reason")"; then
-    IFS=$'\t' read -r wt_path wt_sha wt_note <<<"$wt"
+    IFS=$'\t' read -r wt_path wt_sha pr_head wt_note <<<"$wt"
     printf '### WORKTREE: %s (%s) — the PR head; read files here, not in the current checkout\n' "$wt_path" "$wt_sha"
     [ -z "$wt_note" ] || printf '### NOTE: %s\n' "$wt_note"
   else
     printf '### NOTE: the PR head is not checked out (%s). Review from the diff below: files in the current checkout may not be the PR version.\n' \
       "$(tail -n 1 "$reason")"
+  fi
+
+  # File names from the API: `gh pr diff --name-only` escapes non-ASCII paths.
+  files="$(gh api --hostname "$host" "repos/$owner/$repo/pulls/$num/files?per_page=100" --paginate --jq '.[].filename')"
+  [ -n "$files" ] || die 5 "Pull request #$num has an empty diff — nothing to review."
+  pr_files=()
+  while IFS= read -r f; do pr_files+=("$f"); done <<<"$files"
+  # delta <from> <to> — the PR's files only; names are never globs.
+  delta() { git -c core.quotepath=false --literal-pathspecs diff "$1" "$2" -- "${pr_files[@]}"; }
+
+  if [ "$update" = 1 ]; then
+    if [ -z "$old" ] || [ -z "$pr_head" ]; then
+      printf '### NOTE: no earlier checkout to compare with; no push delta.\n'
+    elif [ "$old" = "$pr_head" ]; then
+      printf '### NOTE: head/ is already at the PR head; no push delta.\n'
+    else
+      printf '\n### NEW COMMITS\n'
+      git log --oneline --no-decorate "$old..$pr_head"
+      printf '\n### PUSH DELTA (%s..%s, the PR'"'"'s files only)\n' "$(git rev-parse --short "$old")" "$(git rev-parse --short "$pr_head")"
+      delta "$old" "$pr_head"
+    fi
+    exit 0
+  fi
+
+  # Your latest review of the code: a run after it is a re-review.
+  since=""
+  if [ "$quick" = 0 ]; then
+    if t="$(bash "$(dirname "$0")/draft.sh" threads "$url" 2>"$reason")"; then
+      since_line="$(jq -r '.review | if . == null then empty else "\(.commit) \(.url) \(.submitted)" end' <<<"$t")"
+      if [ -n "$since_line" ]; then
+        read -r since since_url since_at <<<"$since_line"
+        printf '### SINCE: %s — your last review %s (%s)\n' "$since" "$since_url" "$since_at"
+      fi
+    else
+      printf '### NOTE: could not check for an earlier review of yours (%s); reviewing as a first review.\n' "$(tail -n 1 "$reason")"
+    fi
   fi
 
   # gist: the first informative line of a comment (skipping the AI marker), truncated.
@@ -187,11 +250,30 @@ if [ -n "$pr" ]; then
     --jq "$gist"' .[] | "- [inline] \(.path):\(.line // .original_line) \(.user.login): \(.body | gist)"' \
     2>/dev/null || err "(could not list inline review comments)"
 
-  # File names from the API: `gh pr diff --name-only` escapes non-ASCII paths.
-  files="$(gh api --hostname "$host" "repos/$owner/$repo/pulls/$num/files?per_page=100" --paginate --jq '.[].filename')"
-  [ -n "$files" ] || die 5 "Pull request #$num has an empty diff — nothing to review."
   printf '\n### CHANGED FILES\n%s\n\n### DIFF\n' "$files"
   gh pr diff "$pr"
+
+  if [ -n "$since" ]; then
+    if [ -z "$pr_head" ]; then
+      printf '\n### NOTE: the PR head is not checked out, so there is no delta: review the whole diff, and check your threads all the same.\n'
+    else
+      # The reviewed commit is in the head's history unless the branch was
+      # force-pushed; then try to fetch it by its sha.
+      git cat-file -e "$since^{commit}" 2>/dev/null \
+        || { remote="$(pr_remote "$owner" "$repo")" && git fetch --quiet --no-tags "$remote" "$since" 2>/dev/null; } \
+        || true
+      if ! git cat-file -e "$since^{commit}" 2>/dev/null; then
+        printf '\n### NOTE: the commit of your last review (%s) is not available (force-push?); no delta, review the whole diff.\n' "$since"
+      elif [ "$since" = "$pr_head" ]; then
+        printf '\n### NOTE: no new commits since your last review.\n'
+      else
+        printf '\n### COMMITS SINCE YOUR REVIEW\n'
+        git log --oneline --no-decorate "$since..$pr_head"
+        printf '\n### DELTA (%s..%s, the PR'"'"'s files only)\n' "$(git rev-parse --short "$since")" "$(git rev-parse --short "$pr_head")"
+        delta "$since" "$pr_head"
+      fi
+    fi
+  fi
   exit 0
 fi
 

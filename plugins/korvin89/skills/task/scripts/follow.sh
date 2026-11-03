@@ -18,7 +18,7 @@
 #     COMMENTS <pr> <n>       n unhandled triggers (see threads.sh), once they
 #                             stop changing for --quiet seconds
 #     AUTH … / ERROR …        as in lib/watch.sh
-#   No IDLE: the watch runs until it has something to say; polls back off from
+#   The watch runs until it has something to say; polls back off from
 #   --interval (20) to --max-interval (300).
 #
 # Parked events (task.sh park) stay quiet while their lift has not changed:
@@ -123,7 +123,7 @@ case "$cmd" in
       '{key: $t.key, source: $t.source, base: $t.base, checks: $t.checks, units: $units, parked: $l.parked}' ;;
 
   watch)
-    WATCH_INTERVAL=20; WATCH_MAX_INTERVAL=300; WATCH_TIMEOUT=""
+    WATCH_INTERVAL=20; WATCH_MAX_INTERVAL=300
     while [ $# -gt 0 ]; do
       case "$1" in
         --interval)     WATCH_INTERVAL="${2:-}" ;;

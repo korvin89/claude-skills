@@ -5,9 +5,10 @@ description: >-
   the diff, reads full file context, reviews in ordered
   passes with severity and confidence, optionally adds an independent second
   pass. On a PR the findings go into the reviewer's GitHub draft review, where
-  the reviewer curates them with `ai:` comments and submits it themselves. Use
-  when asked to review a PR, review changes or a diff, or check code before
-  merge.
+  the reviewer curates them with `ai:` comments and submits it themselves;
+  after the submit it follows the PR and re-reviews what changed. Use when
+  asked to review or re-review a PR, review changes or a diff, or check code
+  before merge.
 argument-hint: "[pr-number | pr-url] [--quick]"
 allowed-tools: Read, Grep, Glob, Bash, Agent, AskUserQuestion, Artifact
 ---
@@ -17,7 +18,8 @@ allowed-tools: Read, Grep, Glob, Bash, Agent, AskUserQuestion, Artifact
 You run a **workflow**: collect the diff, build real context around it, review
 it against the rubric. On a PR the findings then go into the reviewer's draft
 review on GitHub, and you keep editing that draft on the reviewer's `ai:`
-comments until they submit it. Every finding is located (`file:line`) and
+comments until they submit it; then you follow the PR and re-review what
+changed when the author asks again. Every finding is located (`file:line`) and
 concrete.
 
 Files bundled with this plugin:
@@ -26,8 +28,8 @@ Files bundled with this plugin:
   severity + confidence, the finding format. Read before pass 1.
 - `${CLAUDE_SKILL_DIR}/scripts/collect-diff.sh` — collects the diff (Step 1).
 - `${CLAUDE_SKILL_DIR}/scripts/draft.sh` — reads and edits the reviewer's draft
-  review (Steps 3, 7, 8). Its header documents the subcommands, the comment
-  kinds and the guards.
+  review and follows the PR (Steps 3, 7, 8, *Re-review*). Its header documents
+  the subcommands, the comment kinds, the guards and the watcher's lines.
 - `${CLAUDE_PLUGIN_ROOT}/skills/cleanup/scripts/cleanup.sh` — removes the
   review's scratch at the end (*Cleanup*).
 - `${CLAUDE_PLUGIN_ROOT}/skills/review-artifacts/SKILL.md` — screenshot pairs
@@ -44,8 +46,14 @@ them `cmd`.
 
 ## Invariants
 
-- **Working language is Russian.** Everything said to the reviewer — in the
-  conversation and in your `🤖💬` replies in the draft — is Russian.
+- **Working language is Russian.** Everything you tell the reviewer in your own
+  words — in the conversation and in your `🤖💬` replies in the draft — is
+  Russian. The skill's fixed lines are English and printed word for word, only
+  the `<…>` filled in: *The closing message*, *Commands*, the pass report,
+  the event lines of Step 8 and the last line of *Validate*.
+- **On a PR the session stays short.** The findings live in the draft; the
+  session gets the fixed lines, errors, answers to the reviewer's questions,
+  and the findings that cannot go into the draft (files outside the diff).
 - **Comment language** is the language of the findings in the draft only.
   Resolved in Step 2.
 - **Style, everywhere** — the dump, the questions, the findings, the replies:
@@ -57,7 +65,8 @@ them `cmd`.
   whatever the comment language.
 - **Draft only.** You write into the reviewer's pending review and never submit
   it; the reviewer submits in GitHub and writes the summary there. A draft they
-  already started is joined, not replaced. Submitted comments are never touched.
+  already started is joined, not replaced. Submitted comments are never touched;
+  a reply to one goes into the draft too.
 - **Markers.** `🤖 **AI generated**` opens every finding in the draft
   (`draft.sh add` prepends it when missing; write it anyway). `🤖💬` opens every
   reply you write in a thread; replies are temporary and go once the thread is
@@ -108,9 +117,13 @@ alone and say so in one Russian line; `head/` was kept because it has local
 changes → its files may be older than the PR, say so; the scratch of other
 reviews → mention it once, in Step 2's message.
 
+`### SINCE:` means the reviewer has already reviewed the code of this PR (a
+bare thread reply does not count): the run is a re-review, see *Re-review*.
+
 ## Step 2 — Configuration (one prompt)
 
-Skip under `--quick` (no second pass, no focus areas).
+Skip under `--quick` (no second pass, no focus areas), and in a re-review
+started by the watcher or by `re-review` (*Re-review*).
 
 Show the reviewer, in Russian, the mode and target, the changed files (count and
 the notable ones), the PR title or branch name, and the other reviews' scratch
@@ -161,7 +174,7 @@ A hunk is not enough to judge a change.
 
 Read `${CLAUDE_SKILL_DIR}/references/rubric.md` and work its passes in order
 over the context from Step 3, focus areas at elevated priority. Hold the
-findings until Step 6.
+findings until Step 6, or Step 7 on a PR.
 
 ## Step 5 — Second pass (only if chosen in Step 2)
 
@@ -188,7 +201,10 @@ whole point.
 - **Singletons**: keep, mark «только проход 1» / «только проход 2», and judge on
   the merits — a singleton is a signal, not a verdict.
 
-## Step 6 — Dump (Russian)
+## Step 6 — Dump (`--quick` and local mode)
+
+On a PR without `--quick` skip this step: the findings go into the draft, not
+into the session.
 
 Present **all** findings in one batch, numbered from 1, in the rubric's finding
 format and order. Open with `🤖 **AI generated**`.
@@ -209,7 +225,7 @@ it, and curation happens there.
 1. **Re-read the draft** (`draft.sh state <pr>`): the reviewer may have added
    comments while you reviewed, and an earlier run may have left findings
    there. Leave out a finding that an `own` comment or an `ai` finding already
-   makes (same place, same point) and name its number in the report.
+   makes (same place, same point).
 2. **Render** each remaining finding in the comment language, style per the
    invariants: marker, severity tag, problem, why, fix; confidence and `✓✓`
    removed. One finding is one thread.
@@ -224,8 +240,9 @@ it, and curation happens there.
    ```
 
    `line` is the new-side line. A line outside the diff becomes a file-level
-   thread; a finding in a file outside the diff is skipped — give such findings
-   to the reviewer in full, for the summary they write at submit. Leave out
+   thread; a finding in a file outside the diff is skipped — it goes into
+   *The closing message* in full, for the summary the reviewer writes at
+   submit. Leave out
    `--head` only when there is no `### WORKTREE:`. Exit codes:
    - `8` — the PR head moved since Step 1 and nothing was added. Tell the
      reviewer, run Step 1 again (the worktree moves to the new head), check
@@ -233,22 +250,61 @@ it, and curation happens there.
    - `1` after some `added` lines — part of the batch went in. Run `state` and
      add only the findings that are not there; never re-run the whole batch.
    - `5` — nothing to add.
-4. **Report** in Russian: a new draft or the reviewer's existing one, what went
-   in, what was left out and why, the link from the script's last line. Keep
-   the review id from that line, `(review …)`, for the watcher. On the first
-   run in a session, add the protocol:
+4. **Close** with *The closing message*.
 
-   > Находки в твоём драфте, Submit — за тобой. Когда сядешь его разбирать,
-   > скажи «следи» — начну реагировать на команды в драфте: ответ в 🤖-треде или
-   > комментарий, начинающийся с `ai:` или `ии:` (на любой строке или под своим
-   > комментарием; `фш:` и `bb:` в другой раскладке тоже пойму). «синк» — разобрать
-   > накопившееся один раз, «пауза» — перестать следить, «проверь драфт» —
-   > перед Submit найти всё служебное. Команды — по-русски или по-английски.
-   > Твои комментарии без префикса не трогаю.
+Then wait: nothing polls GitHub until the reviewer says `watch`. Step 8 is
+driven by the session commands below, also when no finding went in — the
+reviewer can still call you with `ai:` from their own comments.
 
-Then wait: nothing polls the draft until the reviewer asks. Step 8 is driven by
-the session commands below, also when no finding went in — the reviewer can
-still call you with `ai:` from their own comments.
+### The closing message
+
+After a review, exactly this and nothing else — no findings, no counts;
+`<Commands>` is the block from *Commands*:
+
+```
+Review is in your draft: <pr>/files — submit it yourself.
+Watching is off: say `watch` and I will act on your commands in the draft.
+
+<Commands>
+```
+
+When nothing went into the draft, the first line is
+`Review found nothing to add: <pr>/files`. A re-review the reviewer started
+with the skill closes the same way, with `Re-review` for `Review`. A re-review
+started by the watcher or by `re-review` closes with one line:
+
+```
+Re-review is in your draft: <pr>/files — submit it yourself. Same commands; say `help` to list them.
+```
+
+or `Re-review found nothing to add: <pr>/files`.
+
+When findings were skipped as outside the diff, append them in full, in the
+comment language, under the line `Not in the diff — for your summary:`.
+
+### Commands
+
+The closing message and `help` print this block as is:
+
+```
+In the draft — reply in a 🤖 thread, or start a comment with `ai:`
+(in a thread you have already submitted, always with `ai:`):
+  delete · shorter · softer · rephrase: … · en / ru
+  nit · should-fix · blocker · question
+  suggest fix · where else? · artifacts · why? → ok
+  merge with <link | file:line>
+  ai: write up      under your own comment
+  ai: <hypothesis>  on any line
+
+In this session:
+  watch           act on your draft commands, then follow the PR until it is closed
+  sync            handle the draft commands once
+  pause           stop watching; watch resumes
+  validate draft  before Submit: find what must not be published
+  re-review       review what changed since your last review
+  stop            stop watching and remove the review's scratch
+  help            this list
+```
 
 ## Step 8 — Draft loop (on the reviewer's command)
 
@@ -258,6 +314,8 @@ still call you with `ai:` from their own comments.
 | «синк» · `sync` | run a pass now; a running watcher keeps running, none is armed |
 | «пауза» · `pause` | stop the watcher; the scratch stays, «следи» resumes |
 | «проверь драфт» · `validate draft` | validate the draft (*Validate*) |
+| «повторное ревью» · `re-review` | run a re-review now (*Re-review*); a running watcher keeps running |
+| «помощь» · `help` | print *Commands* |
 | «стоп» · `stop` | stop the watcher, clean up, end the loop |
 | a request across the whole draft («убери все nit» · `drop all nits`, «переведи всё на en» · `translate all to en`) | apply it to every `ai` finding and report |
 
@@ -267,37 +325,42 @@ Stop a watcher with the task-stop tool on its background task, or
 **Arm the watcher** with the Bash tool and `run_in_background: true`:
 
 ```
-bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" watch <pr> --review <review-id>
+bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" watch <pr>
 ```
 
-`<review-id>` is the draft's id: the `(review …)` of the `add` line, or the
-`review` of the latest `state`; omit `--review` when there is no draft yet. It
-lets the watcher report a submit that happened while no watcher ran.
-
-It polls the draft and exits with one line; you are woken then. Do not check
-on it in between — no reading its output, no extra `state` calls: the polling
-is its job. One watcher per PR: arm the next one only after the previous one
-has exited. The reviewer may write in the session meanwhile; answer as usual,
-the watcher keeps running.
+It follows the draft and the PR and exits with one line; you are woken then.
+What it has announced is kept in the scratch, so the next watcher does not
+repeat it. Do not check on it in between — no reading its output, no extra
+`state` calls: the polling is its job. One watcher per PR: arm the next one
+only after the previous one has exited. The reviewer may write in the session
+meanwhile; answer as usual, the watcher keeps running.
 
 | Watcher line | Then |
 |---|---|
-| `ACTIONABLE <n>` | run a pass (below), then arm the watcher again |
-| `SUBMITTED <url>` | one Russian line with the link; clean up; the loop ends |
-| `DISCARDED` | one line: the draft was discarded; clean up; the loop ends |
-| `AUTH …` | one line: `gh` is not logged in, `gh auth login` then «следи»; watching stops |
-| `IDLE` | one line: two hours without commands, «следи» resumes; watching stops |
-| `ERROR …` | relay it in one line, «следи» resumes; watching stops |
-| exit with no line | a usage error: relay its stderr in one line; watching stops |
+| `ACTIONABLE <n>` | run a pass (below); arm again |
+| `PUSHED <sha> draft` | *After a push* (below); arm again |
+| `PUSHED <sha>` | `New commits on the PR: <sha7>.`; arm again |
+| `REREQUESTED` | `Review requested again: re-reviewing.`, then *Re-review*; arm again |
+| `REPLIED <n> <url>` | `<n> new replies in your threads: <url>`; arm again |
+| `SUBMITTED <url>` | `Review submitted: <url>. Following the PR: new commits, replies, a new review request.`; arm again |
+| `DISCARDED following` | `Draft discarded. Following the PR.`; arm again |
+| `DISCARDED` | `Draft discarded; watching stopped.`; clean up; the loop ends |
+| `MERGED` · `CLOSED` | `PR merged; watching stopped.` · `PR closed; watching stopped.`; clean up; the loop ends |
+| `AUTH …` | `gh is not logged in: run gh auth login, then say watch.`; watching stops |
+| `ERROR no review scratch …` | `Watching stopped: no review scratch here; run /korvin89:code-review <pr> first.`; watching stops |
+| `ERROR <message>` | `Watching stopped: <message>. Say watch to resume.`; watching stops |
+| exit with no line | a usage error: `Watching stopped: <its stderr>.`; watching stops |
 
-**A pass.** Run `draft.sh state <pr>`. When its `review` is null the draft is
-gone: `latest` (state not `PENDING`) means it was submitted, its `url` is the
-review — handle the pass as `SUBMITTED`, otherwise as `DISCARDED`. Else take
-every thread with `actionable: true`. For each:
+**A pass.** Run `draft.sh state <pr>`. When its `review` is null there is no
+draft and nothing to handle — the watcher reports a submit or a discard
+itself. Else take every thread with `actionable: true`. For each:
 
 1. **Read** the `cmd` comments after your last `🤖💬` reply, and the target:
    the thread's root — an `ai` finding or the reviewer's `own` comment — or,
-   when the root itself is a `cmd`, the line the thread sits on. Take the
+   when the root itself is a `cmd`, the line the thread sits on. In a thread
+   of a submitted review the target is your `ai` reply in it; there only
+   `ai:` comments are commands, and a plain reply is the reviewer's answer to
+   the author (`own`). Take the
    target's body from this state: if the reviewer edited it in GitHub, their
    edit is the base.
 2. **Do** what is asked (table below). Commands are free text; interpret them.
@@ -312,22 +375,43 @@ every thread with `actionable: true`. For each:
      stays;
    - you need an answer, or you are answering a question → reply
      (`draft.sh reply <pr> <thread-id>`, body on stdin) and leave the thread
-     open.
+     open. In a thread of a submitted review, end a reply that asks something
+     with «Ответь с `ai:`.» — a plain answer there would go to the author.
 
    No thread ends a pass still actionable — the watcher would wake you again
    for nothing. A `cmd` that arrived after your `state` call waits for the
    next pass.
 
-Then one Russian line per thread in the session (`path:line` — what was done).
-After a pass woken by `ACTIONABLE`, arm the watcher again; after «синк» leave
-the watcher as it was.
+Then one line in the session: `Handled <n> threads.`, or `No commands
+waiting.` when there were none. After a pass woken by `ACTIONABLE`, arm the
+watcher again; after «синк» leave the watcher as it was.
+
+**After a push** (`PUSHED <sha> draft`). The review moves to the new head,
+and the findings the push fixed leave the draft; the new code itself waits for
+the re-review.
+
+1. Move the worktree and read what the push changed:
+   ```
+   bash "${CLAUDE_SKILL_DIR}/scripts/collect-diff.sh" '<pr>' --update
+   ```
+   When its note says `head/` was kept for its local changes, its files are
+   old: remove nothing, and say so in the line of step 3.
+2. `draft.sh state <pr>`: check every `ai` comment the push delta touches (its
+   file and lines) against the new code — findings and your `--finding`
+   replies alike. A fixed one is deleted when the reviewer never touched it:
+   it is the only draft comment in its thread, and its `updated` equals
+   `created`. A fixed one they worked on stays.
+3. One line: `New commits on the PR: <sha7>.`, then `Removed <n> findings the
+   push fixed: <path:line, …>.` and `Fixed but kept, as you worked on them:
+   <path:line, …>.` when there are such, or `Your draft findings still
+   apply.` when there are none.
 
 Commands come in Russian or English, as free text; the table gives both forms.
 The language of a command does not change the comment language.
 
 | In the thread (RU · EN) | You do |
 |---|---|
-| `удали` · `delete` | delete the whole thread (`ai` root only; the reviewer deletes their own comments in GitHub) |
+| `удали` · `delete` | delete the whole thread (`ai` root only; the reviewer deletes their own comments in GitHub); in a thread of a submitted review, delete your `ai` reply and the commands under it |
 | `короче`, `мягче`, `переформулируй: …`, `en` · `shorter`, `softer`, `rephrase: …`, `ru` | rewrite the target in place |
 | `nit` · `should-fix` · `blocker` · `question` (same in both) | change the tag; rewrite the text when the tag changes what it says |
 | `предложи фикс` · `suggest fix` | append a `suggestion` block that replaces exactly the commented line; a wider fix goes into a plain code block |
@@ -367,11 +451,12 @@ Report in Russian, one line per entry:
 - `warning` — not every thread is visible: say so;
 - `review` null — there is no draft (submitted or discarded).
 
-Validate again after acting on it. End with «драфт чист, можно Submit» when
-`clean` is true, or with what remains.
+Validate again after acting on it. End with `Draft is clean: ready to submit.`
+when `clean` is true, or with what remains.
 
-**Cleanup.** When a PR run ends for good — `SUBMITTED`, `DISCARDED`, «стоп», or
-the end of a `--quick` run — remove its scratch:
+**Cleanup.** When a PR run ends for good — `MERGED`, `CLOSED`, `DISCARDED`
+(without `following`), «стоп», or the end of a `--quick` run — remove its
+scratch:
 
 ```
 bash "${CLAUDE_PLUGIN_ROOT}/skills/cleanup/scripts/cleanup.sh" '<pr>'
@@ -381,5 +466,48 @@ Exit 10 means its checks found something (uncommitted work in a worktree, a
 scratch that may be another PR's, a watcher still running) and nothing was
 removed: relay the warnings in one Russian line and suggest
 `/korvin89:cleanup <pr>`. Never confirm on the reviewer's behalf: no
-`--yes=…` from this skill. After `IDLE`, `AUTH` or
-`ERROR`, and on «пауза», keep the scratch: «следи» resumes the loop.
+`--yes=…` from this skill. After `SUBMITTED`, `DISCARDED following`, `AUTH`
+or `ERROR`, and on «пауза», keep the scratch: the PR is still followed, or
+«следи» resumes it.
+
+## Re-review
+
+The reviewer has reviewed the code before and the PR has moved on. A
+re-review runs on `REREQUESTED`, on `re-review`, or when Step 1 prints
+`### SINCE:`; when Step 1 prints no `### SINCE:`, the run is a first review
+after all. It is the workflow above with these differences:
+
+- **Collect** (Step 1). `### SINCE:` is the commit of the reviewer's last
+  review of the code; `### COMMITS SINCE YOUR REVIEW` and `### DELTA` are what
+  changed after it. A merge of the base into the PR shows in the delta too:
+  only lines inside the PR's own diff can carry findings. A `### NOTE:` that
+  the commit is gone means a force-push: review the whole diff as in a first
+  review, and check the threads all the same.
+- **Configuration** (Step 2) only when the reviewer started the run with the
+  skill. Started by the watcher or by `re-review`: no prompt — no second pass,
+  no focus areas, and the comment language of the reviewer's earlier
+  findings.
+- **Context** (Step 3) adds the reviewer's open threads; the call also marks
+  the pending review request as answered, so the watcher does not start
+  another re-review for it:
+  ```
+  bash "${CLAUDE_SKILL_DIR}/scripts/draft.sh" threads <pr>
+  ```
+- **Pass 1** (Step 4) covers the delta: a new finding is about code that
+  changed after the last review and is not already raised in a thread.
+- **Threads.** For each thread in `threads`, unless it already holds a draft
+  `ai` or `🤖💬` reply of yours, check the point against the code at the head
+  and the author's replies, then reply in it:
+  - fixed → `🤖💬 Исправлено в <sha7>: <how, one line>.` (`draft.sh reply`);
+    the reviewer resolves the thread, and *Validate* removes the note before
+    Submit;
+  - the author argues to keep the code, and the argument holds →
+    `🤖💬 Довод автора убедителен: <why>.`;
+  - not fixed, fixed in part, or the argument does not hold → a reply to the
+    author, in the comment language: what is still wrong, why, the fix
+    (`draft.sh reply <pr> <thread-id> --finding`, which adds the marker). It
+    is curated like a finding: `ai:` commands under it target it.
+- **Into the draft** (Step 7): the new findings with `add`, the replies with
+  `reply`; both join the reviewer's draft or open one.
+- **Close** with *The closing message*: the full one when the reviewer started
+  the run with the skill, the one line otherwise.

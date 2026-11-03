@@ -35,10 +35,12 @@ the full surrounding context of each changed file, reviews in ordered passes
 (intent → correctness → architecture → tests → readability → nits) with a
 severity and a confidence per finding, and optionally runs an independent second
 pass in a sub-agent. On a PR the findings go straight into **your GitHub draft
-review**: curation happens there, and the review is submitted only by you. The
-conversation is in Russian; the language of the findings is chosen at run
-time. The style is fixed everywhere — dump, questions, comments: dry,
-businesslike, no slang, no praise or grading of the reviewed code.
+review**: curation happens there, and the review is submitted only by you.
+After the submit it can follow the PR and re-review what changed when the
+author asks again. The conversation is in Russian, the skill's fixed messages
+are in English, and the language of the findings is chosen at run time. The
+style is fixed everywhere — dump, questions, comments: dry, businesslike, no
+slang, no praise or grading of the reviewed code.
 
 The workflow itself is in
 [SKILL.md](plugins/korvin89/skills/code-review/SKILL.md); the review rules are
@@ -63,10 +65,11 @@ worktree in the review's scratch dir, `.git/code-review/pr-<N>/`. Your checkout
 and branch stay as they are; run the skill from a clone of the PR's repository.
 Everything else the review needs (the findings batch, artifact screenshots)
 goes into the same dir, never into `/tmp`. The dir is removed when the PR run
-ends (Submit, a discarded draft, `stop`, the end of `--quick`). It is kept on `pause`
-and when watching stops on its own (two idle hours, an auth or network error),
-so `watch` can resume, and kept when cleanup's checks find something. Every run
-lists the other reviews' dirs; `korvin89:cleanup` removes them.
+ends (the PR is merged or closed, your first draft is discarded, `stop`, the
+end of `--quick`). It is kept after Submit, since the PR is still followed, on
+`pause`, and when watching stops on an auth or network error, so `watch` can
+resume; and kept when cleanup's checks find something. Every run lists the
+other reviews' dirs; `korvin89:cleanup` removes them.
 
 Everything else is asked in one prompt before the review: whether to run the
 second pass, the comment language, and any focus areas to scrutinize.
@@ -77,17 +80,21 @@ PR" or "review my changes".
 ### The flow
 
 1. **Config** — one prompt with the three questions above.
-2. **Dump** — every finding is listed in the session in Russian, numbered, with
-   a severity (🔴 `blocker` / 🟠 `should-fix` / 🔵 `nit` / ❓ `question`) and a
-   confidence. Outside a PR the run ends here.
+2. **Dump** — outside a PR and under `--quick`: every finding is listed in the
+   session in Russian, numbered, with a severity (🔴 `blocker` / 🟠
+   `should-fix` / 🔵 `nit` / ❓ `question`) and a confidence, and the run ends.
 3. **Draft** — on a PR every finding becomes a thread in your pending review,
-   opened with `🤖 AI generated`. If you have already started a draft (you can
-   review in parallel), the findings join it, and points your own comments
+   opened with `🤖 AI generated`, and the session gets only a link to the PR's
+   files and the list of commands. If you have already started a draft (you
+   can review in parallel), the findings join it, and points your own comments
    already make are left out. Findings in files outside the diff are listed in
    the session for your summary.
 4. **Loop** — once you say `watch` in the session, it watches the draft in the
    background and edits it on your commands until you press **Submit** in
    GitHub; see *Working with the draft*.
+5. **Follow** — after the submit the same watcher follows the PR until it is
+   merged or closed, and re-reviews it when the author asks you again; see
+   *After the submit*.
 
 ### Working with the draft
 
@@ -101,9 +108,9 @@ A typical PR run:
    agent to write them up.
 4. Say `validate draft` before submitting, so nothing meant for the agent gets
    published.
-5. Press **Submit review** in GitHub. A watching session notices, cleans up
-   its scratch, and the run ends; if it was not watching, say `stop` there, or
-   run `/korvin89:cleanup 1234` later.
+5. Press **Submit review** in GitHub. A watching session notices and goes on
+   following the PR (*After the submit*); when you are done with the PR, say
+   `stop`, or run `/korvin89:cleanup 1234` later.
 
 Commands go to two places: **in the draft** for one finding or one line, **in
 the session** for the watcher and the whole draft. Commands are free
@@ -120,6 +127,8 @@ rules:
 - anywhere else, start the comment with `ai:` — under your own comment, or as a
   new comment on a line. `ии:` works too, and so do both typed in the other
   keyboard layout: `фш:`, `bb:`, `фшЖ`;
+- in a thread you have already submitted, only `ai:` comments are commands: a
+  plain reply there is your answer to the author;
 - every other comment of yours is your review; the agent never edits or deletes
   it on its own.
 
@@ -147,31 +156,68 @@ You never delete service comments by hand.
 
 Nothing polls GitHub until you say `watch`, so the draft can wait for you as
 long as you like. While watching, the agent handles your draft commands once
-you have been quiet for about a minute. Watching ends by itself when you submit
-or discard the draft, or after two hours without commands.
+you have been quiet for about a minute. Watching ends by itself when the PR is
+merged or closed, or your first draft is discarded; there is no idle timeout.
 
 | Command | What it does |
 |---|---|
-| `watch` | start reacting to commands in the draft (handles what is already there first) |
+| `watch` | start reacting to commands in the draft (handles what is already there first), then follow the PR |
 | `sync` | handle what is in the draft now, once, without watching |
 | `pause` | stop watching; `watch` resumes |
 | `validate draft` | before Submit: find commands not handled yet, open discussions and findings on lines that moved; remove the leftovers once you confirm |
+| `re-review` | review what changed since your last review (*After the submit*) |
+| `help` | print the command list again |
 | `stop` | stop watching and clean up the scratch |
 | `drop all nits`, `translate all to en` | one change across every 🤖 finding |
+
+If the author pushes while you are still curating, the agent moves the review
+to the new code and deletes the 🤖 comments the push fixed, if you have not
+touched them; the new code itself waits for the re-review.
+
+#### After the submit
+
+The watcher goes on following the PR; polls slow down to once in five minutes
+while there is no draft. It reports in the session, one line each:
+
+- new commits on the PR;
+- new replies by others in your open threads;
+- the PR merged or closed: the run ends and the scratch is removed.
+
+Discarding a draft after you have reviewed once keeps the PR followed;
+discarding the first draft ends the run.
+
+When the author asks for your review again — or you say `re-review`, or run
+`/korvin89:code-review 1234` once more — the agent re-reviews: what changed
+after your last review (a bare reply in a thread does not count), plus your
+open threads. The result is a new draft:
+
+- findings on the new code, as usual;
+- in a thread the author fixed, or argued convincingly about: a `🤖💬` note
+  for you; resolve the thread, and `validate draft` removes the note before
+  Submit once you confirm;
+- in a thread that is still not fixed: a 🤖 reply to the author, which goes
+  out with your review. You curate it with the same commands, written with
+  `ai:`.
 
 #### Leaving the session in the background
 
 The skill's own tool grant lasts only for the turn you start it in. Later
-`draft.sh` calls may stop at a permission prompt that nobody sees, and the loop
-then waits. To avoid that, allow the script in `~/.claude/settings.json`:
+calls — `draft.sh` for the draft, `collect-diff.sh` after a push and for a
+re-review, `cleanup.sh` once the PR is merged — may stop at a permission
+prompt that nobody sees, and the loop then waits. To avoid that, allow the
+scripts in `~/.claude/settings.json`:
 
 ```json
-{ "permissions": { "allow": ["Bash(bash *code-review/scripts/draft.sh*)"] } }
+{ "permissions": { "allow": [
+  "Bash(bash *code-review/scripts/draft.sh*)",
+  "Bash(bash *code-review/scripts/collect-diff.sh*)",
+  "Bash(bash *cleanup/scripts/cleanup.sh*)"
+] } }
 ```
 
-The wildcards match any command that runs a path ending in
-`code-review/scripts/draft.sh`; add the rule only if that is acceptable to you,
-otherwise answer the prompts when the session shows them.
+The wildcards match any command that runs a path ending in those script
+paths; add the rules only if that is acceptable to you, otherwise answer the
+prompts when the session shows them.
 
 ### Per-repo conventions layer (not shipped here)
 
