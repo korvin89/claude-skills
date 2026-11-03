@@ -2,15 +2,17 @@
 
 A Claude Code plugin marketplace. `.claude-plugin/marketplace.json` lists the
 plugins; each plugin is `plugins/<name>/` with `.claude-plugin/plugin.json` and
-`skills/<skill>/SKILL.md`, invoked as `<plugin>:<skill>`. `README.md` is for
-consumers only: install, update, what each skill does. Publishing and
-development notes live here; `CLAUDE.md` is a symlink to this file.
+`skills/<skill>/SKILL.md`, invoked as `<plugin>:<skill>`. `README.md` and
+`docs/` are for consumers only: README is install, update and an overview of
+the skills; `docs/<skill>.md` is one skill's full guide, kept outside the
+plugin so it is not shipped. Publishing and development notes live here;
+`CLAUDE.md` is a symlink to this file.
 
 ## Release
 
 Installed plugins are cached copies pinned by `version` in
 `plugins/korvin89/.claude-plugin/plugin.json`; the catalog is a clone of `main`.
-A change reaches users only when all three hold:
+A change to the plugin reaches users only when all three hold:
 
 1. `version` is bumped (patch for fixes, minor for new flags, skills, or
    removed behaviour);
@@ -22,6 +24,9 @@ Work happens on a `release/<version>` branch with a PR into `main`. Optional
 after the merge: `claude plugin tag --push` creates the `korvin89--v<version>`
 tag.
 
+A change only to `README.md`, `docs/` or this file is not a release: no bump,
+any branch with a PR into `main`. It takes effect on merge.
+
 ## Develop
 
 - `claude --plugin-dir ./plugins/korvin89` loads the working tree for one
@@ -30,5 +35,9 @@ tag.
   no manifest change. A separate plugin needs
   `plugins/<plugin>/.claude-plugin/plugin.json` and an entry in
   `marketplace.json`.
+- Each skill has a guide, `docs/<skill>.md`, and lines in README: a row in
+  the skills table, an invocation, its requirements. A new skill adds them; a
+  change to a skill's user-facing behaviour updates its guide, and the README
+  lines it touches, in the same PR.
 - Scripts are tested against throwaway git repos and a `gh` shim on `PATH`;
   nothing touches a live PR.
