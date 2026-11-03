@@ -13,17 +13,18 @@
 #   NOW   <event line>                  fire at once
 #   WAIT  <fingerprint>  <event line>   fire once the fingerprint has not changed
 #                                       for WATCH_QUIET seconds
+#   HOT                                 nothing to report yet, but something is
+#                                       in progress: keep the first gap
 #   (nothing)                           nothing to report yet
-# It returns non-zero when it could not look.
+# It returns non-zero when it could not look. The loop runs until the probe
+# reports an event; there is no idle timeout.
 #
 # Settings, in seconds:
 #   WATCH_INTERVAL      20     the first gap between polls
 #   WATCH_MAX_INTERVAL  = WATCH_INTERVAL
-#                       quiet polls double the gap up to this; a pending WAIT
-#                       keeps the first gap
+#                       quiet polls double the gap up to this; WAIT and HOT
+#                       bring it back to the first gap
 #   WATCH_QUIET         60     the debounce for WAIT
-#   WATCH_TIMEOUT       7200   empty = never. Once this has passed, a successful
-#                       poll with nothing pending prints IDLE; a failed one never does
 # A probe that runs gh in child processes exports GH_AUTH_FLAG (watch_loop sets
 # it to $GH_TMP/auth), so their auth failures reach the loop.
 #
@@ -34,7 +35,6 @@
 WATCH_INTERVAL="${WATCH_INTERVAL:-20}"
 WATCH_MAX_INTERVAL="${WATCH_MAX_INTERVAL:-$WATCH_INTERVAL}"
 WATCH_QUIET="${WATCH_QUIET:-60}"
-WATCH_TIMEOUT="${WATCH_TIMEOUT-7200}"
 WATCH_PIDFILE=""
 
 watch_pid() {
@@ -46,9 +46,9 @@ watch_release() {
 }
 
 watch_loop() {
-  local probe="$1" start now gap line kind rest fp ev prev="" since=0 fails=0
+  local probe="$1" now gap line kind rest fp ev prev="" since=0 fails=0
   [ "$WATCH_MAX_INTERVAL" -ge "$WATCH_INTERVAL" ] || WATCH_MAX_INTERVAL="$WATCH_INTERVAL"
-  start="$(date +%s)"; gap="$WATCH_INTERVAL"
+  gap="$WATCH_INTERVAL"
   export GH_AUTH_FLAG="$GH_TMP/auth"
   while :; do
     now="$(date +%s)"; kind=""
@@ -64,11 +64,10 @@ watch_loop() {
           if [ "$fp" != "$prev" ]; then prev="$fp"; since="$now"; fi
           if [ $((now - since)) -ge "$WATCH_QUIET" ]; then printf '%s\n' "$ev"; return 0; fi
           gap="$WATCH_INTERVAL" ;;
+        HOT)
+          prev=""; gap="$WATCH_INTERVAL" ;;
         *)
-          prev=""
-          if [ -n "$WATCH_TIMEOUT" ] && [ $((now - start)) -ge "$WATCH_TIMEOUT" ]; then
-            printf 'IDLE\n'; return 0
-          fi ;;
+          prev="" ;;
       esac
     else
       if [ -f "$GH_TMP/auth" ]; then
@@ -80,8 +79,9 @@ watch_loop() {
       fi
     fi
     sleep "$gap"
-    if [ "$kind" != WAIT ]; then
-      gap=$((gap * 2)); [ "$gap" -le "$WATCH_MAX_INTERVAL" ] || gap="$WATCH_MAX_INTERVAL"
-    fi
+    case "$kind" in
+      WAIT|HOT) ;;
+      *) gap=$((gap * 2)); [ "$gap" -le "$WATCH_MAX_INTERVAL" ] || gap="$WATCH_MAX_INTERVAL" ;;
+    esac
   done
 }
