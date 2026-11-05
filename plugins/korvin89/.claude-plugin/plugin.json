@@ -1,6 +1,6 @@
 {
   "name": "korvin89",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "korvin89's personal skill namespace for Claude Code. Ships an interactive, curation-first code-review workflow that works inside your GitHub draft review and re-reviews the PR after your submit, an author-side task loop from task to merged PR, a review-artifacts page builder and a cleanup command; more skills will live here over time.",
   "author": {
     "name": "Evgenii Alaev",

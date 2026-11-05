@@ -272,7 +272,16 @@ writes anything on the PR.
 3. When every unit is merged or closed:
    - stop the watcher and run `task.sh deactivate <key>`;
    - report what shipped;
-   - offer `/korvin89:cleanup task-<key>` for the scratch.
+   - **clean up.** When every unit merged and every `finish` succeeded,
+     nothing in the scratch is needed any more: run
+     `bash "${CLAUDE_PLUGIN_ROOT}/skills/cleanup/scripts/cleanup.sh" task-<key>`
+     and say in the report that the scratch is gone. Exit 10 means a check
+     failed (`CONFIRM <code>` and the warnings): show the warnings and ask
+     «Всё равно чистить?» as the cleanup skill does, then rerun with
+     `--yes=<code>` only on «Да, чистить»; a watcher wake-up with the user
+     away leaves the scratch and names the command instead. A unit closed
+     without a merge, or a `finish` that refused, keeps the scratch: offer
+     `/korvin89:cleanup task-<key>` and leave it to the user.
 
 ## Resume
 

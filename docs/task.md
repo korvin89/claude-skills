@@ -39,7 +39,9 @@ Worktrees live next to your checkout: for `~/src/app`, in
    ticks in its checklist are kept. Moving the PR out of draft is yours.
 5. **Follow** (after `watch`): review comments, CI, conflicts, until the merge.
    Then the worktree and branch are removed, and the next PR of the plan
-   starts.
+   starts. Once the last PR is merged, the task's working files go too;
+   if anything looks off (uncommitted work, a watcher still running) it asks
+   first.
 
 ## What makes it change code
 
@@ -82,8 +84,9 @@ resolved; a person's thread is theirs to close.
 | `pause` | stop following and lift the edit guard, e.g. to work in your own checkout |
 | `stop` | stop following; nothing is deleted |
 
-[`/korvin89:cleanup task-<key>`](cleanup.md) removes an abandoned task: its
-worktrees, and its branches only when they are pushed.
+[`/korvin89:cleanup task-<key>`](cleanup.md) removes an abandoned task, or
+one where a PR was closed without a merge: its worktrees, and its branches
+only when they are pushed. A task whose PRs all merged cleans itself up.
 
 ## Guard rails
 
