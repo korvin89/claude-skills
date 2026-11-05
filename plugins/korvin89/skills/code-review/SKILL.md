@@ -81,8 +81,10 @@ them `cmd`.
 | `<number>` / `#<number>` / `<pr-url>` | PR mode (needs `gh`): findings go into the reviewer's draft (Steps 7–8). Omitted → local mode: everything not yet in `origin/<default>` — the branch's commits, uncommitted changes and untracked files. |
 | `--quick` | Single pass, dump the findings, stop: no prompts, no second pass, no draft. |
 
-When you cannot ask the reviewer (headless run), say so in one Russian line and
-behave as `--quick`.
+`--quick` is on only when the flag is in `$ARGUMENTS`. Nothing else turns it
+on, and nothing else skips the Step 2 prompt: not the environment, not a guess
+that the reviewer cannot answer. Without the flag the run is the full flow
+(Steps 2–8), and the prompt is asked and waited for.
 
 ## Step 1 — Collect
 

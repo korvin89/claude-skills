@@ -37,7 +37,8 @@ worktree in the review's scratch dir, `.git/code-review/pr-<N>/`. Your checkout
 and branch stay as they are; run the skill from a clone of the PR's repository.
 
 Everything else is asked in one prompt before the review: whether to run the
-second pass, the comment language, and any focus areas to scrutinize.
+second pass, the comment language, and any focus areas to scrutinize. The
+prompt is skipped only under `--quick`; nothing else turns quick mode on.
 
 Claude can also trigger the skill on its own when you ask it to "review this
 PR" or "review my changes".
