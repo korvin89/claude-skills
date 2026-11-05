@@ -81,8 +81,9 @@ them `cmd`.
 | `<number>` / `#<number>` / `<pr-url>` | PR mode (needs `gh`): findings go into the reviewer's draft (Steps 7–8). Omitted → local mode: everything not yet in `origin/<default>` — the branch's commits, uncommitted changes and untracked files. |
 | `--quick` | Single pass, dump the findings, stop: no prompts, no second pass, no draft. |
 
-When you cannot ask the reviewer (headless run), say so in one Russian line and
-behave as `--quick`.
+`--quick` is on only when the flag is in `$ARGUMENTS`. Nothing else turns it
+on: not the environment, not an unanswered prompt, not a missing
+`AskUserQuestion` tool. Without the flag the run is the full flow (Steps 2–8).
 
 ## Step 1 — Collect
 
@@ -139,6 +140,10 @@ in a single `AskUserQuestion` call**:
    a risk: «таймзоны в billing»). Whatever they type is the focus areas.
 
 Restate the resolved values in one Russian line and continue.
+
+When the prompt cannot be asked (no `AskUserQuestion` tool, or the call fails),
+take the defaults — no second pass, the default language, no focus areas — say
+so in the same Russian line, and continue the full flow. This is not `--quick`.
 
 ## Step 3 — Context
 
