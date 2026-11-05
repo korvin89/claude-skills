@@ -82,8 +82,9 @@ them `cmd`.
 | `--quick` | Single pass, dump the findings, stop: no prompts, no second pass, no draft. |
 
 `--quick` is on only when the flag is in `$ARGUMENTS`. Nothing else turns it
-on: not the environment, not an unanswered prompt, not a missing
-`AskUserQuestion` tool. Without the flag the run is the full flow (Steps 2–8).
+on, and nothing else skips the Step 2 prompt: not the environment, not a guess
+that the reviewer cannot answer. Without the flag the run is the full flow
+(Steps 2–8), and the prompt is asked and waited for.
 
 ## Step 1 — Collect
 
@@ -140,10 +141,6 @@ in a single `AskUserQuestion` call**:
    a risk: «таймзоны в billing»). Whatever they type is the focus areas.
 
 Restate the resolved values in one Russian line and continue.
-
-When the prompt cannot be asked (no `AskUserQuestion` tool, or the call fails),
-take the defaults — no second pass, the default language, no focus areas — say
-so in the same Russian line, and continue the full flow. This is not `--quick`.
 
 ## Step 3 — Context
 
